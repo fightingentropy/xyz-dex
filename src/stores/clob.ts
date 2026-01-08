@@ -77,16 +77,7 @@ const parseNumber = (value: string | number): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-const buildInitialPrices = (): Record<string, number> => {
-  const prices: Record<string, number> = {};
-  for (const market of MARKETS) {
-    prices[market.symbol] = parseNumber(market.price);
-  }
-  return prices;
-};
-
-const [lastPrices, setLastPrices] =
-  createStore<Record<string, number>>(buildInitialPrices());
+const [lastPrices, setLastPrices] = createStore<Record<string, number>>({});
 
 const getTickSize = (price: number) => {
   if (price >= 10000) return 10;
@@ -121,7 +112,7 @@ const levelMultiplier = (seed: number, index: number) => {
 };
 
 const getLiquidityNotional = (symbol: string) => {
-  const market = MARKETS.find((item) => item.symbol === symbol);
+  const market = MARKETS().find((item) => item.symbol === symbol);
   const volume = market?.volume24h ?? 75e6;
   const notional = volume * LIQUIDITY_FRACTION;
   return Math.min(
@@ -240,7 +231,7 @@ export const getMarkPriceForSymbol = (symbol: string) => {
   if (!symbol) return 0;
   const last = lastPrices[symbol];
   if (Number.isFinite(last) && last > 0) return last;
-  const fallback = MARKETS.find((market) => market.symbol === symbol)?.price;
+  const fallback = MARKETS().find((market) => market.symbol === symbol)?.price;
   return parseNumber(fallback ?? 0);
 };
 

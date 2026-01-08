@@ -74,13 +74,13 @@ const Portfolio: Component = () => {
                 <div class="flex items-center justify-between">
                   <span class="text-sm text-slate-300">Perps</span>
                   <span class="text-sm font-medium text-slate-100">
-                    0.0450% / 0.0150%
+                    0% / 0%
                   </span>
                 </div>
                 <div class="flex items-center justify-between">
                   <span class="text-sm text-slate-300">Spot</span>
                   <span class="text-sm font-medium text-slate-100">
-                    0.0700% / 0.0400%
+                    0% / 0%
                   </span>
                 </div>
               </div>

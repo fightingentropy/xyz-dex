@@ -1,5 +1,5 @@
 import { Component, For, Show, createMemo } from "solid-js";
-import { formatPrice } from "../lib/binance";
+import { formatPrice } from "../lib/hyperliquid";
 import {
   Collateral,
   closePosition,

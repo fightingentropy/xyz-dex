@@ -1,5 +1,5 @@
 import { Component, For, Show } from "solid-js";
-import { formatPrice } from "../lib/binance";
+import { formatPrice } from "../lib/hyperliquid";
 import { tradeHistory } from "../stores/portfolio";
 
 const columns = ["Time", "Symbol", "Side", "Price", "Size", "Notional", "PnL"];

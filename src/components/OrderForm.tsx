@@ -732,41 +732,21 @@ const OrderForm: Component = () => {
 
       {/* Portfolio Section */}
       <div class="mt-auto border-t border-brand-border bg-brand-screen px-4 py-5 space-y-4">
-        <button class="w-full rounded-xl bg-brand-accent py-2.5 text-sm font-semibold text-brand-screen">
-          Deposit
-        </button>
-
         <div class="flex gap-3">
-          <button class="flex-1 rounded-xl border border-brand-accent/60 py-2 text-sm font-medium text-brand-accent hover:bg-brand-accent/10 transition-colors">
-            Perps &lt;-&gt; Spot
+          <button class="flex-1 rounded-xl bg-brand-accent py-2.5 text-sm font-semibold text-brand-screen">
+            Deposit
           </button>
-          <button class="flex-1 rounded-xl border border-brand-accent/60 py-2 text-sm font-medium text-brand-accent hover:bg-brand-accent/10 transition-colors">
+          <button class="flex-1 rounded-xl border border-brand-accent/60 py-2.5 text-sm font-semibold text-brand-accent hover:bg-brand-accent/10 transition-colors">
             Withdraw
           </button>
         </div>
 
         <div class="space-y-2 border-t border-brand-border/70 pt-3">
-          <div class="text-sm text-brand-slate-500">Account Equity</div>
-          <div class="flex justify-between text-sm">
-            <span class="text-brand-slate-500">Spot</span>
-            <span class="font-mono text-slate-100">
-              {formatUsd(spotEquity())}
-            </span>
-          </div>
-          <div class="flex justify-between text-sm">
-            <span class="text-brand-slate-500">Perps</span>
-            <span class="font-mono text-slate-100">
-              {formatUsd(perpsEquity())}
-            </span>
-          </div>
-        </div>
-
-        <div class="space-y-2 border-t border-brand-border/70 pt-3">
-          <div class="text-sm text-brand-slate-500">Perps Overview</div>
+          <div class="text-sm text-brand-slate-500">Account Overview</div>
           <div class="flex justify-between text-sm">
             <span class="text-brand-slate-500">Balance</span>
             <span class="font-mono text-slate-100">
-              {formatUsd(perpsBalance())}
+              {formatUsd(perpsBalance() + spotEquity())}
             </span>
           </div>
           <div class="flex justify-between text-sm">

@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js";
-import { normalizeSymbol } from "../lib/binance";
+import { normalizeSymbol } from "../lib/hyperliquid";
 import { currentSymbol, setCurrentSymbol, setCurrentMarket } from "./market";
 
 export type Page = "trade" | "portfolio" | "charts";
@@ -38,7 +38,7 @@ const [currentPage, setCurrentPageInternal] = createSignal<Page>(
 // Set initial symbol from URL if present
 if (initialState.symbol) {
   setCurrentSymbol(initialState.symbol);
-  setCurrentMarket(`${initialState.symbol}-USDT`);
+  setCurrentMarket(`${initialState.symbol}-USDC`);
 }
 
 // Update URL when page changes
@@ -68,7 +68,7 @@ window.addEventListener("popstate", (event) => {
     if (state.symbol) {
       const symbol = normalizeSymbol(state.symbol);
       setCurrentSymbol(symbol);
-      setCurrentMarket(`${symbol}-USDT`);
+      setCurrentMarket(`${symbol}-USDC`);
     }
   } else {
     // Fallback: parse current URL
@@ -76,7 +76,7 @@ window.addEventListener("popstate", (event) => {
     setCurrentPageInternal(parsed.page);
     if (parsed.symbol) {
       setCurrentSymbol(parsed.symbol);
-      setCurrentMarket(`${parsed.symbol}-USDT`);
+      setCurrentMarket(`${parsed.symbol}-USDC`);
     }
   }
 });

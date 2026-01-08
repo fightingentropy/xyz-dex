@@ -1,7 +1,7 @@
 import { Component, createEffect, createMemo, createSignal } from "solid-js";
 import SymbolChart from "./SymbolChart";
 import { MARKETS } from "../stores/market";
-import { normalizeSymbol } from "../lib/binance";
+import { normalizeSymbol } from "../lib/hyperliquid";
 
 const STORAGE_KEY = "trade-xyz-charts-grid";
 const RESOLUTION_KEY = "trade-xyz-charts-resolution";
@@ -58,7 +58,7 @@ const loadSymbols = (): string[] => {
 
 const getSymbolOptions = (): string[] => {
   const set = new Set<string>();
-  MARKETS.forEach((market) => set.add(market.symbol));
+  MARKETS().forEach((market) => set.add(market.symbol));
   DEFAULT_SYMBOLS.forEach((symbol) => set.add(symbol));
   return Array.from(set).sort();
 };
@@ -178,7 +178,7 @@ const ChartsGrid: Component = () => {
         {symbols().map((symbol) => (
           <div class="relative flex min-h-0 flex-col bg-brand-screen">
             <div class="absolute left-3 top-3 z-10 rounded-md border border-brand-border bg-brand-surface/80 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-slate-200">
-              {symbol}-USDT
+              {symbol}-USDC
             </div>
             <SymbolChart symbol={symbol} resolution={resolution()} />
           </div>
