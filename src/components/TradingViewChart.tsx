@@ -14,8 +14,9 @@ import {
   Time,
   ColorType,
 } from "lightweight-charts";
-import type { IChartApi, ISeriesApi, LineData } from "lightweight-charts";
+import type { IChartApi, ISeriesApi, LineData, IPriceLine } from "lightweight-charts";
 import { currentMarket, currentSymbol } from "../stores/market";
+import { getPositionForSymbol } from "../stores/clob";
 import {
   fetchCandles,
   resolutionToMs,
@@ -107,6 +108,7 @@ const TradingViewChart: Component = () => {
   let lastLoadedKey: string | undefined;
   const maSeries = new Map<MaPeriod, ISeriesApi<"Line">>();
   let localCandles: Candle[] = [];
+  let entryPriceLine: IPriceLine | undefined;
 
   const [resolution, setResolution] =
     createSignal<Resolution>(loadResolution());
@@ -492,7 +494,7 @@ const TradingViewChart: Component = () => {
         horzLines: { color: "rgba(38, 42, 47, 0.6)" },
       },
       crosshair: {
-        mode: 1,
+        mode: 0, // Normal mode - follows cursor freely
         vertLine: {
           color: "#6b7280",
           width: 1,
@@ -647,6 +649,33 @@ const TradingViewChart: Component = () => {
       localStorage.setItem(MA_STORAGE_KEY, JSON.stringify(value));
     } catch (error) {
       // Ignore storage errors
+    }
+  });
+
+  // Position entry price line
+  createEffect(() => {
+    if (!chartReady() || !candleSeries) return;
+
+    const symbol = currentSymbol();
+    const position = getPositionForSymbol(symbol);
+
+    // Remove existing line if any
+    if (entryPriceLine) {
+      candleSeries.removePriceLine(entryPriceLine);
+      entryPriceLine = undefined;
+    }
+
+    // Add entry line if there's a position
+    if (position && position.size !== 0) {
+      const isLong = position.size > 0;
+      entryPriceLine = candleSeries.createPriceLine({
+        price: position.entryPrice,
+        color: isLong ? "#50e3ab" : "#ff5572",
+        lineWidth: 1,
+        lineStyle: 2, // Dashed
+        axisLabelVisible: true,
+        title: "",
+      });
     }
   });
 

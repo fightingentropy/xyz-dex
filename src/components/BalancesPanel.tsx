@@ -6,7 +6,7 @@ import {
 } from "../stores/clob";
 import { MARKETS, selectMarket, type Market } from "../stores/market";
 import { setCurrentPage } from "../stores/page";
-import { SpotAsset, getSpotBalance } from "../stores/wallet";
+import { SpotAsset, getSpotBalance, openTransferModal } from "../stores/wallet";
 
 const columns = [
   "Coin",
@@ -67,6 +67,7 @@ const BalancesPanel: Component<{
 }> = (props) => {
   const perpsTotal = createMemo(() => getBalance("USDC"));
   const perpsAvailable = createMemo(() => getAvailableBalance("USDC"));
+  const spotUsdcBalance = createMemo(() => getSpotBalance("USDC"));
   const headerPadding = () => (props.compact ? "px-3 py-2" : "px-3 py-2.5");
   const cellPadding = () => (props.compact ? "px-3 py-1.5" : "px-3 py-2");
   const textSize = () => (props.compact ? "text-xs" : "text-sm");
@@ -130,7 +131,10 @@ const BalancesPanel: Component<{
                   <button class="text-brand-accent hover:underline">
                     Send
                   </button>
-                  <button class="text-brand-accent hover:underline">
+                  <button
+                    class="text-brand-accent hover:underline"
+                    onClick={() => openTransferModal("perpsToSpot")}
+                  >
                     Transfer to Spot
                   </button>
                 </div>
@@ -139,6 +143,49 @@ const BalancesPanel: Component<{
                 <span class="text-brand-slate-500">--</span>
               </td>
             </tr>
+            {/* Spot USDC Row */}
+            <Show when={spotUsdcBalance() > 0}>
+              <tr class="border-b border-brand-border/40">
+                <td class={`${cellPadding()} ${textSize()}`}>
+                  <div class="flex items-center gap-2">
+                    <span class="font-semibold text-slate-100">USDC</span>
+                    <span class="text-xs text-brand-slate-500">Spot</span>
+                  </div>
+                </td>
+                <td class={`${cellPadding()} ${textSize()}`}>
+                  <span class="font-mono">
+                    {formatAmountWithUnit(spotUsdcBalance(), 2, "USDC")}
+                  </span>
+                </td>
+                <td class={`${cellPadding()} ${textSize()}`}>
+                  <span class="font-mono">
+                    {formatAmountWithUnit(spotUsdcBalance(), 2, "USDC")}
+                  </span>
+                </td>
+                <td class={`${cellPadding()} ${textSize()}`}>
+                  <span class="font-mono">{formatUsd(spotUsdcBalance())}</span>
+                </td>
+                <td class={`${cellPadding()} ${textSize()}`}>
+                  <span class="text-brand-slate-500">--</span>
+                </td>
+                <td class={`${cellPadding()} ${textSize()}`}>
+                  <div class="flex items-center gap-4 whitespace-nowrap">
+                    <button class="text-brand-accent hover:underline">
+                      Send
+                    </button>
+                    <button
+                      class="text-brand-accent hover:underline"
+                      onClick={() => openTransferModal("spotToPerps")}
+                    >
+                      Transfer to Perps
+                    </button>
+                  </div>
+                </td>
+                <td class={`${cellPadding()} ${textSize()}`}>
+                  <span class="text-brand-slate-500">--</span>
+                </td>
+              </tr>
+            </Show>
             <For each={visibleSpotAssets()}>
               {(asset) => {
                 const balance = createMemo(() => getSpotBalance(asset.symbol));

@@ -302,13 +302,15 @@ export const listOpenOrders = query({
   handler: async (ctx) => {
     const user = await getAuthUser(ctx);
     if (!user) return [];
+    // Use the by_user_status_created index with database ordering for efficiency
     const orders = await ctx.db
       .query("orders")
-      .withIndex("by_user_status", (q) =>
+      .withIndex("by_user_status_created", (q) =>
         q.eq("userId", user._id).eq("status", "open"),
       )
+      .order("desc")
       .collect();
-    return orders.sort((a, b) => b.createdAt - a.createdAt);
+    return orders;
   },
 });
 
@@ -361,7 +363,7 @@ export const placePerpsOrder = mutation({
       throw new Error("Invalid leverage.");
     }
 
-    const marginType = args.marginType ?? "isolated";
+    const marginType = args.marginType ?? "cross";
     const positions = await ctx.db
       .query("positions")
       .withIndex("by_user", (q) => q.eq("userId", user._id))

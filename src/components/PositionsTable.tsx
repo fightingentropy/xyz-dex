@@ -87,40 +87,52 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
           >
             <For each={positions()}>
               {(position) => {
-                const mark = getMarkPriceForSymbol(position.symbol);
-                const positionValue = Math.abs(position.size) * mark;
-                const margin =
-                  position.leverage > 0 ? positionValue / position.leverage : 0;
-                const pnl = (mark - position.entryPrice) * position.size;
-                const roe = margin > 0 ? (pnl / margin) * 100 : 0;
-                const marginType = position.marginType ?? "isolated";
+                // Use getter functions for reactivity - these will re-run when lastPrices updates
+                const mark = () => getMarkPriceForSymbol(position.symbol);
+                const hasValidPrice = () => {
+                  const m = mark();
+                  return Number.isFinite(m) && m > 0;
+                };
+                const positionValue = () => Math.abs(position.size) * mark();
+                const margin = () =>
+                  position.leverage > 0 ? positionValue() / position.leverage : 0;
+                const pnl = () => (mark() - position.entryPrice) * position.size;
+                const roe = () => (margin() > 0 ? (pnl() / margin()) * 100 : 0);
+                const marginType = position.marginType ?? "cross";
                 const marginLabel =
                   marginType === "cross" ? "Cross" : "Isolated";
-                const totalUnrealized =
+                const totalUnrealized = () =>
                   unrealizedByCollateral()[position.collateral] ?? 0;
-                const currentUnrealized =
-                  Number.isFinite(mark) && mark > 0
-                    ? (mark - position.entryPrice) * position.size
+                const currentUnrealized = () => {
+                  const m = mark();
+                  return Number.isFinite(m) && m > 0
+                    ? (m - position.entryPrice) * position.size
                     : 0;
-                const baseEquity =
+                };
+                const baseEquity = () =>
                   getBalance(position.collateral) +
-                  (totalUnrealized - currentUnrealized);
-                const crossLiqPrice =
-                  Number.isFinite(baseEquity) && position.size !== 0
-                    ? position.entryPrice - baseEquity / position.size
+                  (totalUnrealized() - currentUnrealized());
+                const crossLiqPrice = () => {
+                  const equity = baseEquity();
+                  return Number.isFinite(equity) && position.size !== 0
+                    ? position.entryPrice - equity / position.size
                     : NaN;
+                };
                 const liqFactor =
                   position.leverage > 0 ? 1 / position.leverage : 0;
                 const isolatedLiqPrice =
                   position.size >= 0
                     ? position.entryPrice * (1 - liqFactor)
                     : position.entryPrice * (1 + liqFactor);
-                const liqPrice =
-                  marginType === "cross" ? crossLiqPrice : isolatedLiqPrice;
+                const liqPrice = () =>
+                  marginType === "cross" ? crossLiqPrice() : isolatedLiqPrice;
                 const isLong = position.size >= 0;
 
                 return (
-                  <tr class="border-b border-brand-border/40">
+                  <tr
+                    class="border-b border-brand-border/40"
+                    classList={{ "opacity-50 animate-pulse": !hasValidPrice() }}
+                  >
                     <td class={`${cellPadding} ${textSize}`}>
                       <div class="flex items-center gap-2">
                         <span
@@ -142,7 +154,9 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
                       <span class="font-mono">
-                        {formatUsd(positionValue)} {position.collateral}
+                        {hasValidPrice()
+                          ? `${formatUsd(positionValue())} ${position.collateral}`
+                          : "--"}
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
@@ -151,25 +165,33 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
-                      <span class="font-mono">{formatPrice(mark)}</span>
-                    </td>
-                    <td class={`${cellPadding} ${textSize}`}>
-                      <span
-                        class={`font-mono ${pnl >= 0 ? "text-brand-green-400" : "text-brand-red-400"}`}
-                      >
-                        {formatSignedUsd(pnl)} ({roe.toFixed(2)}%)
+                      <span class="font-mono">
+                        {hasValidPrice() ? formatPrice(mark()) : "--"}
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
-                      <span class="font-mono">
-                        {Number.isFinite(liqPrice) && liqPrice > 0
-                          ? formatPrice(liqPrice)
+                      <span
+                        class={`font-mono ${hasValidPrice() ? (pnl() >= 0 ? "text-brand-green-400" : "text-brand-red-400") : "text-brand-slate-400"}`}
+                      >
+                        {hasValidPrice()
+                          ? `${formatSignedUsd(pnl())} (${roe().toFixed(2)}%)`
                           : "--"}
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
                       <span class="font-mono">
-                        {formatUsd(margin)} ({marginLabel})
+                        {hasValidPrice() &&
+                        Number.isFinite(liqPrice()) &&
+                        liqPrice() > 0
+                          ? formatPrice(liqPrice())
+                          : "--"}
+                      </span>
+                    </td>
+                    <td class={`${cellPadding} ${textSize}`}>
+                      <span class="font-mono">
+                        {hasValidPrice()
+                          ? `${formatUsd(margin())} (${marginLabel})`
+                          : `-- (${marginLabel})`}
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>

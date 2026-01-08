@@ -1,4 +1,4 @@
-import { createMemo, createRoot } from "solid-js";
+import { createMemo, createRoot, createSignal } from "solid-js";
 import { api } from "../../convex/_generated/api";
 import { convex, createConvexQuery } from "../lib/convex";
 import { isAuthenticated } from "./auth";
@@ -24,7 +24,13 @@ export const SPOT_ASSETS: SpotAsset[] = [
   "ATOM",
 ];
 
-const { spotBalances } = createRoot(() => {
+const {
+  spotBalances,
+  transferModalOpen,
+  transferDirection,
+  openTransferModal,
+  closeTransferModal,
+} = createRoot(() => {
   const balancesQuery = createConvexQuery(
     api.spot.listSpotBalances,
     () => {
@@ -47,8 +53,31 @@ const { spotBalances } = createRoot(() => {
     return next;
   });
 
-  return { spotBalances };
+  // Transfer modal state
+  const [transferModalOpen, setTransferModalOpen] = createSignal(false);
+  const [transferDirection, setTransferDirection] = createSignal<
+    "perpsToSpot" | "spotToPerps"
+  >("perpsToSpot");
+
+  const openTransferModal = (
+    direction: "perpsToSpot" | "spotToPerps" = "perpsToSpot",
+  ) => {
+    setTransferDirection(direction);
+    setTransferModalOpen(true);
+  };
+
+  const closeTransferModal = () => setTransferModalOpen(false);
+
+  return {
+    spotBalances,
+    transferModalOpen,
+    transferDirection,
+    openTransferModal,
+    closeTransferModal,
+  };
 });
+
+export { transferModalOpen, transferDirection, openTransferModal, closeTransferModal };
 
 export const getSpotBalance = (asset: SpotAsset) => spotBalances()[asset] ?? 0;
 
@@ -87,6 +116,30 @@ export const placeSpotOrder = async ({
     const message =
       error instanceof Error ? error.message : "Spot order failed.";
     console.error("Failed to place spot order:", error);
+    return { ok: false, error: message };
+  }
+};
+
+export const transferUSDC = async ({
+  amount,
+  direction,
+}: {
+  amount: number;
+  direction: "perpsToSpot" | "spotToPerps";
+}): Promise<{ ok: boolean; error?: string }> => {
+  if (!isAuthenticated()) {
+    return { ok: false, error: "Sign in to transfer." };
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { ok: false, error: "Enter a valid amount." };
+  }
+  try {
+    await convex.mutation(api.spot.transferUSDC, { amount, direction });
+    return { ok: true };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Transfer failed.";
+    console.error("Failed to transfer USDC:", error);
     return { ok: false, error: message };
   }
 };

@@ -1,6 +1,7 @@
 import { createSignal, createEffect, onCleanup } from "solid-js";
 import {
   fetchMetaAndAssetCtxs,
+  fetchSpotMetaAndAssetCtxs,
   getAssetContext,
   formatPrice,
   normalizeSymbol,
@@ -64,102 +65,6 @@ export const toggleWatchlist = (symbol: string) => {
       watchlist: watchlistSet.has(m.symbol),
     }))
   );
-};
-
-// Fetch and update all markets from Hyperliquid
-export const fetchAllMarkets = async (signal?: AbortSignal): Promise<void> => {
-  try {
-    const metaAndCtxs = await fetchMetaAndAssetCtxs(signal);
-    if (!metaAndCtxs || signal?.aborted) return;
-
-    const newMarkets: Market[] = [];
-
-    metaAndCtxs.universe.forEach((asset, index) => {
-      const ctx = metaAndCtxs.ctx[index];
-      if (!ctx) return;
-
-      const markPrice = Number(ctx.markPx || ctx.midPx || 0);
-      const prevDayPrice = Number(ctx.prevDayPx || 0);
-      const change24h =
-        prevDayPrice > 0
-          ? ((markPrice - prevDayPrice) / prevDayPrice) * 100
-          : 0;
-      const volume24h = Number(ctx.dayNtlVlm || 0);
-      const openInterest = Number(ctx.openInterest || 0) * markPrice;
-      const funding = Number(ctx.funding || 0) * 100;
-
-      // Format price for display
-      let priceStr: string;
-      if (markPrice >= 1000) {
-        priceStr = markPrice.toLocaleString("en-US", {
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 0,
-        });
-      } else if (markPrice >= 1) {
-        priceStr = markPrice.toFixed(2);
-      } else {
-        priceStr = markPrice.toFixed(5);
-      }
-
-      newMarkets.push({
-        symbol: asset.name,
-        name: `${asset.name}-USDC`,
-        price: priceStr,
-        change24h,
-        volume24h,
-        openInterest,
-        funding,
-        type: "perps",
-        leverage: `${asset.maxLeverage}x`,
-        watchlist: watchlistSet.has(asset.name),
-      });
-    });
-
-    // Sort by volume by default
-    newMarkets.sort((a, b) => b.volume24h - a.volume24h);
-
-    setMarkets(newMarkets);
-    setMarketsLoading(false);
-  } catch (e) {
-    if (signal?.aborted) return;
-    console.error("Failed to fetch markets:", e);
-    setMarketsLoading(false);
-  }
-};
-
-// Initialize markets fetch
-let marketsFetchController: AbortController | undefined;
-let marketsFetchTimer: number | undefined;
-
-export const startMarketsFetch = () => {
-  // Initial fetch
-  marketsFetchController?.abort();
-  marketsFetchController = new AbortController();
-  fetchAllMarkets(marketsFetchController.signal);
-
-  // Refresh every 5 seconds
-  marketsFetchTimer = setInterval(() => {
-    marketsFetchController?.abort();
-    marketsFetchController = new AbortController();
-    fetchAllMarkets(marketsFetchController.signal);
-  }, 5000) as unknown as number;
-};
-
-export const stopMarketsFetch = () => {
-  if (marketsFetchTimer) clearInterval(marketsFetchTimer);
-  marketsFetchController?.abort();
-};
-
-// Auto-start on import
-startMarketsFetch();
-
-// Ticker data derived from markets
-export const TICKER_DATA = () => {
-  const m = markets();
-  return m.slice(0, 10).map((market) => ({
-    symbol: market.symbol,
-    change: market.change24h,
-  }));
 };
 
 // Settings persistence
@@ -317,118 +222,256 @@ export const selectMarket = (market: Market) => {
   document.title = `${markPrice()} | ${market.symbol} | Trade XYZ`;
 };
 
-// Live price polling using Hyperliquid API
+// Ticker data derived from markets
+export const TICKER_DATA = () => {
+  const m = markets();
+  return m.slice(0, 10).map((market) => ({
+    symbol: market.symbol,
+    change: market.change24h,
+  }));
+};
+
+/**
+ * Update the current symbol's live price display from MetaAndAssetCtxs data
+ */
+const updateCurrentSymbolPrices = (
+  coin: string,
+  metaAndCtxs: MetaAndAssetCtxs,
+) => {
+  const assetData = getAssetContext(coin, metaAndCtxs);
+  if (!assetData) return;
+
+  const { ctx } = assetData;
+
+  // Mark price
+  const markSource = ctx.markPx ?? ctx.midPx;
+  const markNumber = markSource ? Number(markSource) : NaN;
+  if (markSource) {
+    const formatted = formatPrice(markSource);
+    setMarkPrice(formatted);
+    document.title = `${formatted} | ${currentSymbol()} | Trade XYZ`;
+  }
+
+  // Oracle price
+  const oracleSource = ctx.oraclePx ?? ctx.markPx;
+  if (oracleSource) {
+    setOraclePrice(formatPrice(oracleSource));
+  }
+
+  // 24h change calculated from prevDayPx
+  if (ctx.prevDayPx && markNumber) {
+    const prevDayPrice = Number(ctx.prevDayPx);
+    if (Number.isFinite(prevDayPrice) && prevDayPrice > 0) {
+      const change = ((markNumber - prevDayPrice) / prevDayPrice) * 100;
+      if (Number.isFinite(change)) {
+        setChange24h(change);
+      }
+    }
+  }
+
+  // 24h volume (dayNtlVlm is notional volume in USD)
+  if (ctx.dayNtlVlm != null) {
+    const vol = Number(ctx.dayNtlVlm);
+    if (Number.isFinite(vol)) {
+      if (vol >= 1e9) {
+        setVolume24h(`$${(vol / 1e9).toFixed(2)}B`);
+      } else if (vol >= 1e6) {
+        setVolume24h(`$${(vol / 1e6).toFixed(2)}M`);
+      } else if (vol >= 1e3) {
+        setVolume24h(`$${(vol / 1e3).toFixed(2)}K`);
+      } else {
+        setVolume24h(`$${vol.toFixed(2)}`);
+      }
+    }
+  }
+
+  // Open interest (in base currency, convert to USD using mark price)
+  if (ctx.openInterest != null) {
+    const oiBase = Number(ctx.openInterest);
+    const oiVal = Number.isFinite(markNumber) ? oiBase * markNumber : oiBase;
+    if (Number.isFinite(oiVal)) {
+      if (oiVal >= 1e9) {
+        setOpenInterest(`$${(oiVal / 1e9).toFixed(2)}B`);
+      } else if (oiVal >= 1e6) {
+        setOpenInterest(`$${(oiVal / 1e6).toFixed(2)}M`);
+      } else if (oiVal >= 1e3) {
+        setOpenInterest(`$${(oiVal / 1e3).toFixed(2)}K`);
+      } else {
+        setOpenInterest(`$${oiVal.toFixed(2)}`);
+      }
+    }
+  }
+
+  // Funding rate (already in decimal form, multiply by 100 for percentage)
+  if (ctx.funding != null) {
+    const fundingVal = Number(ctx.funding) * 100;
+    if (Number.isFinite(fundingVal)) {
+      const sign = fundingVal >= 0 ? "+" : "";
+      setFundingRate(`${sign}${fundingVal.toFixed(4)}%`);
+    }
+  }
+};
+
+/**
+ * Fetch and update all markets AND the current symbol's prices from a single API call.
+ * This consolidates what was previously two separate polling loops.
+ */
+const formatPriceStr = (price: number): string => {
+  if (price >= 1000) {
+    return price.toLocaleString("en-US", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    });
+  } else if (price >= 1) {
+    return price.toFixed(2);
+  } else {
+    return price.toFixed(5);
+  }
+};
+
+const fetchAndUpdateAll = async (
+  signal?: AbortSignal,
+  updateLivePrices = true,
+): Promise<void> => {
+  try {
+    // Fetch perps and spot data in parallel
+    const [metaAndCtxs, spotData] = await Promise.all([
+      fetchMetaAndAssetCtxs(signal),
+      fetchSpotMetaAndAssetCtxs(signal),
+    ]);
+
+    if (signal?.aborted) return;
+
+    const newMarkets: Market[] = [];
+
+    // Add perps markets
+    if (metaAndCtxs) {
+      metaAndCtxs.universe.forEach((asset, index) => {
+        const ctx = metaAndCtxs.ctx[index];
+        if (!ctx) return;
+
+        const markPriceVal = Number(ctx.markPx || ctx.midPx || 0);
+        const prevDayPrice = Number(ctx.prevDayPx || 0);
+        const change24hVal =
+          prevDayPrice > 0
+            ? ((markPriceVal - prevDayPrice) / prevDayPrice) * 100
+            : 0;
+        const volume24hVal = Number(ctx.dayNtlVlm || 0);
+        const openInterestVal = Number(ctx.openInterest || 0) * markPriceVal;
+        const fundingVal = Number(ctx.funding || 0) * 100;
+
+        newMarkets.push({
+          symbol: asset.name,
+          name: `${asset.name}-USDC`,
+          price: formatPriceStr(markPriceVal),
+          change24h: change24hVal,
+          volume24h: volume24hVal,
+          openInterest: openInterestVal,
+          funding: fundingVal,
+          type: "perps",
+          leverage: `${asset.maxLeverage}x`,
+          watchlist: watchlistSet.has(asset.name),
+        });
+      });
+    }
+
+    // Add spot markets
+    if (spotData) {
+      const tokenMap = new Map<number, string>();
+      spotData.meta.tokens.forEach((token) => {
+        tokenMap.set(token.index, token.name);
+      });
+
+      spotData.meta.universe.forEach((pair, index) => {
+        const ctx = spotData.ctx[index];
+        if (!ctx) return;
+
+        // Get base token name (first token in pair)
+        const baseToken = tokenMap.get(pair.tokens[0]);
+        const quoteToken = tokenMap.get(pair.tokens[1]);
+        if (!baseToken || !quoteToken) return;
+
+        // Skip non-USDC pairs for now
+        if (quoteToken !== "USDC") return;
+
+        const markPriceVal = Number(ctx.markPx || ctx.midPx || 0);
+        const prevDayPrice = Number(ctx.prevDayPx || 0);
+        const change24hVal =
+          prevDayPrice > 0
+            ? ((markPriceVal - prevDayPrice) / prevDayPrice) * 100
+            : 0;
+        const volume24hVal = Number(ctx.dayNtlVlm || 0);
+
+        newMarkets.push({
+          symbol: baseToken,
+          name: `${baseToken}-USDC`,
+          price: formatPriceStr(markPriceVal),
+          change24h: change24hVal,
+          volume24h: volume24hVal,
+          openInterest: 0,
+          funding: 0,
+          type: "spot",
+          leverage: "1x",
+          watchlist: watchlistSet.has(baseToken),
+        });
+      });
+    }
+
+    // Sort by volume by default
+    newMarkets.sort((a, b) => b.volume24h - a.volume24h);
+
+    setMarkets(newMarkets);
+    setMarketsLoading(false);
+
+    // Also update the current symbol's live prices from the same data
+    if (updateLivePrices && metaAndCtxs) {
+      const coin = currentSymbol();
+      updateCurrentSymbolPrices(coin, metaAndCtxs);
+    }
+  } catch (e) {
+    if (signal?.aborted) return;
+    console.error("Failed to fetch markets:", e);
+    setMarketsLoading(false);
+  }
+};
+
+// For backward compatibility - alias to the consolidated function
+export const fetchAllMarkets = fetchAndUpdateAll;
+
+/**
+ * Unified live price polling hook.
+ * Fetches market data once every 2 seconds and updates both:
+ * - The full markets list
+ * - The current symbol's live price display
+ *
+ * This consolidates what was previously two separate polling loops
+ * (startMarketsFetch at 5s and useLivePrices at 2s) into one.
+ */
 export const useLivePrices = (options?: { enabled?: () => boolean }) => {
   let timer: number | undefined;
   let controller: AbortController | undefined;
   let requestId = 0;
   const isEnabled = options?.enabled ?? (() => true);
 
-  const updatePrices = async (coin: string) => {
+  const doFetch = async () => {
     const currentRequestId = ++requestId;
     controller?.abort();
     const nextController = new AbortController();
     controller = nextController;
 
     try {
-      // Fetch all market data from Hyperliquid in a single request
-      const metaAndCtxs = await fetchMetaAndAssetCtxs(nextController.signal);
-
-      if (
-        currentRequestId !== requestId ||
-        nextController.signal.aborted ||
-        !isEnabled() ||
-        currentSymbol() !== coin
-      ) {
-        return;
-      }
-
-      if (!metaAndCtxs) return;
-
-      const assetData = getAssetContext(coin, metaAndCtxs);
-      if (!assetData) return;
-
-      const { ctx } = assetData;
-
-      // Mark price
-      const markSource = ctx.markPx ?? ctx.midPx;
-      const markNumber = markSource ? Number(markSource) : NaN;
-      if (markSource) {
-        const formatted = formatPrice(markSource);
-        setMarkPrice(formatted);
-        document.title = `${formatted} | ${currentSymbol()} | Trade XYZ`;
-      }
-
-      // Oracle price
-      const oracleSource = ctx.oraclePx ?? ctx.markPx;
-      if (oracleSource) {
-        setOraclePrice(formatPrice(oracleSource));
-      }
-
-      // 24h change calculated from prevDayPx
-      if (ctx.prevDayPx && markNumber) {
-        const prevDayPrice = Number(ctx.prevDayPx);
-        if (Number.isFinite(prevDayPrice) && prevDayPrice > 0) {
-          const change = ((markNumber - prevDayPrice) / prevDayPrice) * 100;
-          if (Number.isFinite(change)) {
-            setChange24h(change);
-          }
-        }
-      }
-
-      // 24h volume (dayNtlVlm is notional volume in USD)
-      if (ctx.dayNtlVlm != null) {
-        const vol = Number(ctx.dayNtlVlm);
-        if (Number.isFinite(vol)) {
-          if (vol >= 1e9) {
-            setVolume24h(`$${(vol / 1e9).toFixed(2)}B`);
-          } else if (vol >= 1e6) {
-            setVolume24h(`$${(vol / 1e6).toFixed(2)}M`);
-          } else if (vol >= 1e3) {
-            setVolume24h(`$${(vol / 1e3).toFixed(2)}K`);
-          } else {
-            setVolume24h(`$${vol.toFixed(2)}`);
-          }
-        }
-      }
-
-      // Open interest (in base currency, convert to USD using mark price)
-      if (ctx.openInterest != null) {
-        const oiBase = Number(ctx.openInterest);
-        const oiVal = Number.isFinite(markNumber)
-          ? oiBase * markNumber
-          : oiBase;
-        if (Number.isFinite(oiVal)) {
-          if (oiVal >= 1e9) {
-            setOpenInterest(`$${(oiVal / 1e9).toFixed(2)}B`);
-          } else if (oiVal >= 1e6) {
-            setOpenInterest(`$${(oiVal / 1e6).toFixed(2)}M`);
-          } else if (oiVal >= 1e3) {
-            setOpenInterest(`$${(oiVal / 1e3).toFixed(2)}K`);
-          } else {
-            setOpenInterest(`$${oiVal.toFixed(2)}`);
-          }
-        }
-      }
-
-      // Funding rate (already in decimal form, multiply by 100 for percentage)
-      if (ctx.funding != null) {
-        const fundingVal = Number(ctx.funding) * 100;
-        if (Number.isFinite(fundingVal)) {
-          const sign = fundingVal >= 0 ? "+" : "";
-          setFundingRate(`${sign}${fundingVal.toFixed(4)}%`);
-        }
-      }
+      await fetchAndUpdateAll(nextController.signal, true);
     } catch (e) {
       if (nextController.signal.aborted) return;
       console.error("Error updating prices:", e);
     }
   };
 
-  // React to symbol changes
+  // React to symbol changes and enabled state
   createEffect(() => {
-    const coin = currentSymbol();
     const enabled = isEnabled();
+    // Track currentSymbol to trigger re-fetch on symbol change
+    currentSymbol();
 
     // Clear previous timer
     if (timer) {
@@ -439,11 +482,11 @@ export const useLivePrices = (options?: { enabled?: () => boolean }) => {
 
     if (!enabled) return;
 
-    // Immediate update for new symbol
-    updatePrices(coin);
+    // Immediate update
+    doFetch();
 
-    // Start polling for this symbol
-    timer = setInterval(() => updatePrices(coin), 2000) as unknown as number;
+    // Start polling - unified 2 second interval for both markets + live prices
+    timer = setInterval(doFetch, 2000) as unknown as number;
   });
 
   onCleanup(() => {
@@ -451,3 +494,7 @@ export const useLivePrices = (options?: { enabled?: () => boolean }) => {
     controller?.abort();
   });
 };
+
+// Initial fetch on module load (non-polling, just to populate markets initially)
+// The useLivePrices hook will take over polling when the app mounts
+fetchAndUpdateAll(undefined, false);

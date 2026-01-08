@@ -28,7 +28,7 @@ const OrderForm: Component = () => {
   const [leverage, setLeverage] = createSignal(25);
   const [leverageMenuOpen, setLeverageMenuOpen] = createSignal(false);
   const [marginType, setMarginType] = createSignal<"isolated" | "cross">(
-    "isolated",
+    "cross",
   );
   const [amount, setAmount] = createSignal("");
   const [limitPrice, setLimitPrice] = createSignal("");

@@ -9,5 +9,14 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'lightweight-charts': ['lightweight-charts'],
+          'convex': ['convex'],
+        },
+      },
+    },
+    minify: 'esbuild',
   },
 });

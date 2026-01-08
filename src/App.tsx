@@ -9,6 +9,7 @@ import Portfolio from "./components/Portfolio";
 import ChartsGrid from "./components/ChartsGrid";
 import TradePanel from "./components/TradePanel";
 import AuthModal from "./components/AuthModal";
+import TransferModal from "./components/TransferModal";
 import { useLivePrices, showOrderBook } from "./stores/market";
 import { currentPage, setCurrentPage } from "./stores/page";
 import { authReady, isAuthenticated, login, logout } from "./stores/auth";
@@ -178,6 +179,7 @@ const App: Component = () => {
       </Show>
 
       <AuthModal />
+      <TransferModal />
 
       {/* Symbol Search Modal */}
       <SymbolSearch />

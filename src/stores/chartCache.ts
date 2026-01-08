@@ -178,27 +178,3 @@ export const updateLastCandle = (
   memoryCache.set(key, existing);
   debouncedSave();
 };
-
-// Clear cache for a specific key
-export const clearCache = (symbol?: string, resolution?: string): void => {
-  if (symbol && resolution) {
-    const key = getCacheKey(symbol, resolution);
-    memoryCache.delete(key);
-  } else {
-    memoryCache.clear();
-  }
-  debouncedSave();
-};
-
-// Get cache stats (for debugging)
-export const getCacheStats = (): { keys: string[]; totalCandles: number } => {
-  let totalCandles = 0;
-  const keys: string[] = [];
-
-  memoryCache.forEach((entry, key) => {
-    keys.push(key);
-    totalCandles += entry.candles.length;
-  });
-
-  return { keys, totalCandles };
-};

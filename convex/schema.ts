@@ -58,7 +58,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"])
-    .index("by_user_status", ["userId", "status"]),
+    .index("by_user_status", ["userId", "status"])
+    .index("by_user_status_created", ["userId", "status", "createdAt"]),
   positions: defineTable({
     userId: v.id("users"),
     symbol: v.string(),
@@ -85,7 +86,8 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_user", ["userId"])
-    .index("by_user_symbol", ["userId", "symbol"]),
+    .index("by_user_symbol", ["userId", "symbol"])
+    .index("by_user_created", ["userId", "createdAt"]),
   portfolioMetrics: defineTable({
     userId: v.id("users"),
     totalEquity: v.number(),

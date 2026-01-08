@@ -1,26 +1,18 @@
-import { createEffect, createMemo, createRoot } from "solid-js";
+import { createEffect, createMemo, createRoot, batch, untrack } from "solid-js";
 import { createStore } from "solid-js/store";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { convex, createConvexQuery } from "../lib/convex";
 import { isAuthenticated } from "./auth";
 import { currentSymbol, markPrice, MARKETS } from "./market";
+import type { OrderBookLevel, L2Book as OrderBook } from "../lib/format";
 
 export type Collateral = "USDC" | "USDT";
 export type OrderSide = "buy" | "sell";
 export type OrderType = "market" | "limit";
 export type MarginType = "isolated" | "cross";
 
-export interface OrderBookLevel {
-  price: number;
-  size: number;
-  total: number;
-}
-
-export interface OrderBook {
-  bids: OrderBookLevel[];
-  asks: OrderBookLevel[];
-}
+export type { OrderBookLevel, OrderBook };
 
 export type Order = Doc<"orders">;
 export type Position = Doc<"positions">;
@@ -112,7 +104,10 @@ const levelMultiplier = (seed: number, index: number) => {
 };
 
 const getLiquidityNotional = (symbol: string) => {
-  const market = MARKETS().find((item) => item.symbol === symbol);
+  // Use untrack to prevent creating a subscription to MARKETS inside effects
+  const market = untrack(() => MARKETS()).find(
+    (item) => item.symbol === symbol,
+  );
   const volume = market?.volume24h ?? 75e6;
   const notional = volume * LIQUIDITY_FRACTION;
   return Math.min(
@@ -231,11 +226,15 @@ export const getMarkPriceForSymbol = (symbol: string) => {
   if (!symbol) return 0;
   const last = lastPrices[symbol];
   if (Number.isFinite(last) && last > 0) return last;
-  const fallback = MARKETS().find((market) => market.symbol === symbol)?.price;
+  // Use untrack to prevent creating a subscription to MARKETS inside effects
+  const fallback = untrack(() => MARKETS()).find(
+    (market) => market.symbol === symbol,
+  )?.price;
   return parseNumber(fallback ?? 0);
 };
 
 createRoot(() => {
+  // Sync prices for the current symbol from live markPrice
   createEffect(() => {
     const symbol = currentSymbol();
     const price = parseNumber(markPrice());
@@ -244,18 +243,37 @@ createRoot(() => {
     }
   });
 
+  // Sync prices for ALL symbols from MARKETS data (ensures position prices are accurate)
+  createEffect(() => {
+    const markets = MARKETS();
+    // Batch all updates to prevent triggering effects mid-iteration
+    batch(() => {
+      for (const market of markets) {
+        const price = parseNumber(market.price);
+        if (Number.isFinite(price) && price > 0) {
+          setLastPrices(market.symbol, price);
+        }
+      }
+    });
+  });
+
   createEffect(() => {
     const symbol = currentSymbol();
     const mark = getMarkPriceForSymbol(symbol);
     openOrders();
     if (!Number.isFinite(mark) || mark <= 0) return;
-    const existing = orderBooks[symbol];
-    if (!existing) {
+    const { hasBook, bestBid, bestAsk } = untrack(() => {
+      const book = orderBooks[symbol];
+      return {
+        hasBook: Boolean(book),
+        bestBid: book?.bids[0]?.price ?? 0,
+        bestAsk: book?.asks[0]?.price ?? 0,
+      };
+    });
+    if (!hasBook) {
       setOrderBooks(symbol, seedOrderBook(symbol, mark));
       return;
     }
-    const bestBid = existing.bids[0]?.price ?? 0;
-    const bestAsk = existing.asks[0]?.price ?? 0;
     const mid = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : 0;
     if (!mid) return;
     const drift = Math.abs(mark - mid) / mid;

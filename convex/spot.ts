@@ -49,6 +49,73 @@ export const listSpotBalances = query({
   },
 });
 
+export const transferUSDC = mutation({
+  args: {
+    amount: v.number(),
+    direction: v.union(v.literal("perpsToSpot"), v.literal("spotToPerps")),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuthUser(ctx);
+    if (!Number.isFinite(args.amount) || args.amount <= 0) {
+      throw new Error("Enter a valid amount.");
+    }
+
+    const perpsBalance = await ctx.db
+      .query("perpsBalances")
+      .withIndex("by_user_asset", (q) =>
+        q.eq("userId", user._id).eq("asset", "USDC"),
+      )
+      .unique();
+    const spotBalance = await getSpotBalance(ctx, user._id, "USDC");
+
+    const perpsAmount = perpsBalance?.balance ?? 0;
+    const spotAmount = spotBalance?.balance ?? 0;
+
+    if (args.direction === "perpsToSpot") {
+      if (args.amount > perpsAmount) {
+        throw new Error("Insufficient Perps USDC balance.");
+      }
+      // Deduct from perps
+      if (perpsBalance) {
+        await ctx.db.patch(perpsBalance._id, {
+          balance: perpsAmount - args.amount,
+          updatedAt: Date.now(),
+        });
+      }
+      // Add to spot
+      await upsertSpotBalance(ctx, user._id, "USDC", spotAmount + args.amount);
+    } else {
+      if (args.amount > spotAmount) {
+        throw new Error("Insufficient Spot USDC balance.");
+      }
+      // Deduct from spot
+      await upsertSpotBalance(ctx, user._id, "USDC", spotAmount - args.amount);
+      // Add to perps
+      const now = Date.now();
+      if (!perpsBalance) {
+        await ctx.db.insert("perpsBalances", {
+          userId: user._id,
+          asset: "USDC",
+          balance: args.amount,
+          updatedAt: now,
+        });
+      } else {
+        await ctx.db.patch(perpsBalance._id, {
+          balance: perpsAmount + args.amount,
+          updatedAt: now,
+        });
+      }
+    }
+
+    await updatePortfolioMetrics(ctx, user._id, {
+      volumeDelta: 0,
+      pnlDelta: 0,
+    });
+
+    return { ok: true };
+  },
+});
+
 export const placeSpotOrder = mutation({
   args: {
     symbol: v.string(),
