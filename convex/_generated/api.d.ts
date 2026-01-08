@@ -16,6 +16,7 @@ import type * as lib_auth from "../lib/auth.js";
 import type * as lib_portfolio from "../lib/portfolio.js";
 import type * as orders from "../orders.js";
 import type * as portfolio from "../portfolio.js";
+import type * as portfolioMargin from "../portfolioMargin.js";
 import type * as spot from "../spot.js";
 import type * as trades from "../trades.js";
 import type * as users from "../users.js";
@@ -35,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   "lib/portfolio": typeof lib_portfolio;
   orders: typeof orders;
   portfolio: typeof portfolio;
+  portfolioMargin: typeof portfolioMargin;
   spot: typeof spot;
   trades: typeof trades;
   users: typeof users;

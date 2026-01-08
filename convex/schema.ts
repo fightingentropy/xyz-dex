@@ -8,6 +8,7 @@ export default defineSchema({
     email: v.optional(v.string()),
     demoSeedVersion: v.optional(v.number()),
     deviceId: v.optional(v.string()), // Legacy field for old documents
+    portfolioMarginEnabled: v.optional(v.boolean()), // Enable spot-collateralized perps
     createdAt: v.number(),
     lastSeenAt: v.number(),
   }).index("by_token", ["tokenIdentifier"]),
@@ -68,7 +69,9 @@ export default defineSchema({
     leverage: v.number(),
     collateral: v.union(v.literal("USDC"), v.literal("USDT")),
     marginType: v.optional(v.union(v.literal("isolated"), v.literal("cross"))),
+    spotCollateralSize: v.optional(v.number()), // Amount of position backed by spot holdings
     realizedPnl: v.number(),
+    cumulativeFunding: v.optional(v.number()), // Cumulative funding collected or paid
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"])

@@ -4,6 +4,10 @@ import OpenOrdersTable from "./OpenOrdersTable";
 import PositionsTable from "./PositionsTable";
 import TradeHistoryTable from "./TradeHistoryTable";
 import { portfolioMetrics } from "../stores/portfolio";
+import {
+  isPortfolioMarginEnabled,
+  togglePortfolioMargin,
+} from "../stores/clob";
 
 type TabId =
   | "balances"
@@ -31,7 +35,19 @@ const Portfolio: Component = () => {
   const [accountsFilter] = createSignal("All");
   const [periodFilter] = createSignal("7 Days");
   const [chartType] = createSignal("PnL");
+  const [isTogglingMargin, setIsTogglingMargin] = createSignal(false);
   const metrics = () => portfolioMetrics();
+
+  const handleTogglePortfolioMargin = async () => {
+    if (isTogglingMargin()) return;
+    setIsTogglingMargin(true);
+    try {
+      const newValue = !isPortfolioMarginEnabled();
+      await togglePortfolioMargin(newValue);
+    } finally {
+      setIsTogglingMargin(false);
+    }
+  };
 
   const formatUsd = (value?: number) => {
     if (!Number.isFinite(value ?? NaN)) return "--";
@@ -43,9 +59,55 @@ const Portfolio: Component = () => {
 
   return (
     <div class="flex flex-col h-full bg-brand-screen text-slate-200 overflow-hidden">
-      {/* Page Title */}
-      <div class="px-4 py-4">
+      {/* Page Title & Portfolio Margin Toggle */}
+      <div class="px-4 py-4 flex items-center justify-between">
         <h1 class="text-xl font-semibold text-slate-100">Portfolio</h1>
+        
+        {/* Portfolio Margin Toggle */}
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2">
+            <span class="text-sm text-brand-slate-400">Portfolio Margin</span>
+            <div class="relative group">
+              <svg
+                class="w-4 h-4 text-brand-slate-500 cursor-help"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <path d="M12 16v-4" />
+                <path d="M12 8h.01" />
+              </svg>
+              <div class="absolute bottom-full right-0 mb-2 w-64 p-3 bg-brand-surface border border-brand-border rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                <p class="text-xs text-brand-slate-300 leading-relaxed">
+                  Enable to use spot holdings as collateral for short perp positions. 
+                  Hedged positions (short perp + spot) have reduced or no liquidation risk.
+                </p>
+              </div>
+            </div>
+          </div>
+          <button
+            class={`relative w-11 h-6 rounded-full transition-colors ${
+              isPortfolioMarginEnabled()
+                ? "bg-emerald-500"
+                : "bg-brand-slate-600"
+            } ${isTogglingMargin() ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+            onClick={handleTogglePortfolioMargin}
+            disabled={isTogglingMargin()}
+          >
+            <span
+              class={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
+                isPortfolioMarginEnabled() ? "left-6" : "left-1"
+              }`}
+            />
+          </button>
+          <Show when={isPortfolioMarginEnabled()}>
+            <span class="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 font-medium">
+              ACTIVE
+            </span>
+          </Show>
+        </div>
       </div>
 
       {/* Main Content */}

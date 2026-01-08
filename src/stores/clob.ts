@@ -17,7 +17,21 @@ export type { OrderBookLevel, OrderBook };
 export type Order = Doc<"orders">;
 export type Position = Doc<"positions">;
 
-const { openOrders, positions, perpsBalances } = createRoot(() => {
+// Portfolio Margin Status type
+export type PortfolioMarginStatus = {
+  enabled: boolean;
+  hedgingStatus: Array<{
+    symbol: string;
+    positionSize: number;
+    spotBalance: number;
+    hedgedSize: number;
+    unhedgedSize: number;
+    fullyHedged: boolean;
+    spotCollateralSize: number;
+  }>;
+} | null;
+
+const { openOrders, positions, perpsBalances, portfolioMarginStatus } = createRoot(() => {
   const openOrdersQuery = createConvexQuery(
     api.orders.listOpenOrders,
     () => {
@@ -42,6 +56,13 @@ const { openOrders, positions, perpsBalances } = createRoot(() => {
     [],
   );
 
+  const portfolioMarginQuery = createConvexQuery(
+    api.portfolioMargin.getPortfolioMarginStatus,
+    () => {
+      return isAuthenticated() ? {} : null;
+    },
+  );
+
   const perpsBalances = createMemo<Record<Collateral, number>>(() => {
     const next: Record<Collateral, number> = { USDC: 0, USDT: 0 };
     const balances = balancesQuery() ?? [];
@@ -57,6 +78,7 @@ const { openOrders, positions, perpsBalances } = createRoot(() => {
     openOrders: () => openOrdersQuery() ?? [],
     positions: () => positionsQuery() ?? [],
     perpsBalances,
+    portfolioMarginStatus: () => portfolioMarginQuery() as PortfolioMarginStatus,
   };
 });
 const [orderBooks, setOrderBooks] = createStore<Record<string, OrderBook>>({});
@@ -298,10 +320,46 @@ export const getAvailableBalance = (collateral: Collateral) => {
     .reduce((sum, pos) => {
       const mark = getMarkPriceForSymbol(pos.symbol);
       if (!Number.isFinite(mark) || mark <= 0 || pos.leverage <= 0) return sum;
-      const notional = Math.abs(pos.size) * mark;
+      // Account for spot collateral - only unhedged portion uses USDC margin
+      const spotCollateral = pos.spotCollateralSize ?? 0;
+      const unhedgedSize = Math.max(0, Math.abs(pos.size) - spotCollateral);
+      const notional = unhedgedSize * mark;
       return sum + notional / pos.leverage;
     }, 0);
   return Math.max(balance - marginUsed, 0);
+};
+
+// Portfolio Margin helpers
+export const isPortfolioMarginEnabled = () => {
+  const status = portfolioMarginStatus();
+  return status?.enabled ?? false;
+};
+
+export const getHedgingStatusForSymbol = (symbol: string) => {
+  const status = portfolioMarginStatus();
+  if (!status) return null;
+  return status.hedgingStatus.find((h) => h.symbol === symbol) ?? null;
+};
+
+export const togglePortfolioMargin = async (
+  enabled: boolean,
+): Promise<{ ok: boolean; error?: string }> => {
+  if (!isAuthenticated()) {
+    return { ok: false, error: "Sign in to change settings." };
+  }
+  try {
+    await convex.mutation(api.portfolioMargin.togglePortfolioMargin, {
+      enabled,
+    });
+    // Recalculate spot collateral for all positions
+    await convex.mutation(api.portfolioMargin.recalculateSpotCollateral, {});
+    return { ok: true };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to update portfolio margin.";
+    console.error("Failed to toggle portfolio margin:", error);
+    return { ok: false, error: message };
+  }
 };
 
 export const getBalance = (collateral: Collateral) =>
@@ -400,4 +458,4 @@ export const closePosition = async (symbol: string) => {
   }
 };
 
-export { openOrders, positions };
+export { openOrders, positions, portfolioMarginStatus };

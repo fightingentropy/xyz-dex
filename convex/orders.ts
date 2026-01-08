@@ -3,7 +3,13 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { getAuthUser, requireAuthUser } from "./lib/auth";
-import { updatePortfolioMetrics } from "./lib/portfolio";
+import {
+  calculateSpotCollateralForPosition,
+  calculateUnhedgedSize,
+  getSpotBalanceForAsset,
+  isPortfolioMarginEnabled,
+  updatePortfolioMetrics,
+} from "./lib/portfolio";
 
 const collateralValidator = v.union(v.literal("USDC"), v.literal("USDT"));
 const sideValidator = v.union(v.literal("buy"), v.literal("sell"));
@@ -45,8 +51,10 @@ const calculateMarginUsed = (positions: Doc<"positions">[]) => {
     if (!Number.isFinite(position.entryPrice) || position.entryPrice <= 0) {
       continue;
     }
-    marginUsed +=
-      (Math.abs(position.size) * position.entryPrice) / position.leverage;
+    // Account for spot collateral - only unhedged portion requires USDC margin
+    const spotCollateral = position.spotCollateralSize ?? 0;
+    const unhedgedSize = calculateUnhedgedSize(position.size, spotCollateral);
+    marginUsed += (unhedgedSize * position.entryPrice) / position.leverage;
   }
   return marginUsed;
 };
@@ -58,11 +66,15 @@ const calculateNextMarginUsed = (
     signedSize,
     leverage,
     markPrice,
+    spotBalanceForSymbol = 0,
+    portfolioMarginEnabled = false,
   }: {
     symbol: string;
     signedSize: number;
     leverage: number;
     markPrice: number;
+    spotBalanceForSymbol?: number;
+    portfolioMarginEnabled?: boolean;
   },
 ) => {
   let marginUsed = 0;
@@ -72,22 +84,44 @@ const calculateNextMarginUsed = (
     let nextSize = position.size;
     let nextLeverage = position.leverage;
     let price = position.entryPrice;
+    let spotCollateral = position.spotCollateralSize ?? 0;
 
     if (position.symbol === symbol) {
       applied = true;
       nextSize = position.size + signedSize;
       nextLeverage = leverage;
       price = markPrice;
+      // Recalculate spot collateral for the new position size
+      if (portfolioMarginEnabled) {
+        spotCollateral = calculateSpotCollateralForPosition(
+          spotBalanceForSymbol,
+          nextSize,
+        );
+      } else {
+        spotCollateral = 0;
+      }
     }
 
     if (nextSize === 0 || nextLeverage <= 0) continue;
     if (!Number.isFinite(price) || price <= 0) continue;
-    marginUsed += (Math.abs(nextSize) * price) / nextLeverage;
+
+    // Only unhedged portion requires USDC margin
+    const unhedgedSize = calculateUnhedgedSize(nextSize, spotCollateral);
+    marginUsed += (unhedgedSize * price) / nextLeverage;
   }
 
   if (!applied && signedSize !== 0) {
     if (leverage > 0 && Number.isFinite(markPrice) && markPrice > 0) {
-      marginUsed += (Math.abs(signedSize) * markPrice) / leverage;
+      // Calculate spot collateral for new position
+      let spotCollateral = 0;
+      if (portfolioMarginEnabled) {
+        spotCollateral = calculateSpotCollateralForPosition(
+          spotBalanceForSymbol,
+          signedSize,
+        );
+      }
+      const unhedgedSize = calculateUnhedgedSize(signedSize, spotCollateral);
+      marginUsed += (unhedgedSize * markPrice) / leverage;
     }
   }
 
@@ -137,8 +171,19 @@ const applyFillToPosition = async (
   const now = Date.now();
   let realizedPnl = 0;
 
+  // Check if portfolio margin is enabled and get spot balance
+  const portfolioMarginEnabled = await isPortfolioMarginEnabled(ctx, userId);
+  const spotBalance = portfolioMarginEnabled
+    ? await getSpotBalanceForAsset(ctx, userId, symbol)
+    : 0;
+
   if (!existing) {
     if (signedSize === 0) return 0;
+    // Calculate spot collateral for new position
+    const spotCollateralSize = calculateSpotCollateralForPosition(
+      spotBalance,
+      signedSize,
+    );
     await ctx.db.insert("positions", {
       userId,
       symbol,
@@ -147,7 +192,9 @@ const applyFillToPosition = async (
       leverage,
       collateral,
       marginType,
+      spotCollateralSize,
       realizedPnl: 0,
+      cumulativeFunding: 0,
       updatedAt: now,
     });
     return 0;
@@ -156,6 +203,12 @@ const applyFillToPosition = async (
   const nextSize = existing.size + signedSize;
   const sameDirection =
     Math.sign(existing.size) === Math.sign(signedSize) || signedSize === 0;
+
+  // Calculate new spot collateral for the updated position
+  const spotCollateralSize = calculateSpotCollateralForPosition(
+    spotBalance,
+    nextSize,
+  );
 
   if (sameDirection) {
     const totalAbs = Math.abs(existing.size) + Math.abs(signedSize);
@@ -172,6 +225,7 @@ const applyFillToPosition = async (
       leverage,
       collateral,
       marginType,
+      spotCollateralSize,
       updatedAt: now,
     });
     return 0;
@@ -188,6 +242,7 @@ const applyFillToPosition = async (
   if (Math.abs(signedSize) < Math.abs(existing.size)) {
     await ctx.db.patch(existing._id, {
       size: nextSize,
+      spotCollateralSize,
       realizedPnl: nextRealized,
       updatedAt: now,
     });
@@ -205,6 +260,7 @@ const applyFillToPosition = async (
     leverage,
     collateral,
     marginType,
+    spotCollateralSize,
     realizedPnl: nextRealized,
     updatedAt: now,
   });
@@ -372,12 +428,24 @@ export const placePerpsOrder = mutation({
       (position) => position.collateral === args.collateral,
     );
     const signedSize = args.side === "buy" ? args.size : -args.size;
+
+    // Check portfolio margin status and get spot balance for this symbol
+    const portfolioMarginEnabled = await isPortfolioMarginEnabled(
+      ctx,
+      user._id,
+    );
+    const spotBalanceForSymbol = portfolioMarginEnabled
+      ? await getSpotBalanceForAsset(ctx, user._id, args.symbol)
+      : 0;
+
     const currentMarginUsed = calculateMarginUsed(collateralPositions);
     const nextMarginUsed = calculateNextMarginUsed(collateralPositions, {
       symbol: args.symbol,
       signedSize,
       leverage: args.leverage,
       markPrice: args.markPrice,
+      spotBalanceForSymbol,
+      portfolioMarginEnabled,
     });
     const availableBalance = await getPerpsBalance(
       ctx,

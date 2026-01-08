@@ -7,6 +7,7 @@ import {
   getMarkPriceForSymbol,
   positions,
 } from "../stores/clob";
+import { MARKETS } from "../stores/market";
 
 const columns = [
   "Asset",
@@ -94,8 +95,22 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                   return Number.isFinite(m) && m > 0;
                 };
                 const positionValue = () => Math.abs(position.size) * mark();
-                const margin = () =>
-                  position.leverage > 0 ? positionValue() / position.leverage : 0;
+
+                // Portfolio margin: calculate hedged vs unhedged portions
+                const spotCollateral = position.spotCollateralSize ?? 0;
+                const isShort = position.size < 0;
+                const hedgedSize = isShort ? spotCollateral : 0;
+                const unhedgedSize = Math.abs(position.size) - hedgedSize;
+                const isFullyHedged = hedgedSize > 0 && unhedgedSize <= 0;
+                const isPartiallyHedged = hedgedSize > 0 && unhedgedSize > 0;
+
+                // Margin calculation: only unhedged portion requires USDC margin
+                const margin = () => {
+                  if (position.leverage <= 0) return 0;
+                  const unhedgedValue = unhedgedSize * mark();
+                  return unhedgedValue / position.leverage;
+                };
+
                 const pnl = () => (mark() - position.entryPrice) * position.size;
                 const roe = () => (margin() > 0 ? (pnl() / margin()) * 100 : 0);
                 const marginType = position.marginType ?? "cross";
@@ -112,21 +127,85 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                 const baseEquity = () =>
                   getBalance(position.collateral) +
                   (totalUnrealized() - currentUnrealized());
-                const crossLiqPrice = () => {
-                  const equity = baseEquity();
-                  return Number.isFinite(equity) && position.size !== 0
-                    ? position.entryPrice - equity / position.size
-                    : NaN;
+
+                // Liquidation price calculation accounting for spot collateral
+                const liqPrice = () => {
+                  // Fully hedged positions have no liquidation risk
+                  if (isFullyHedged) return null;
+
+                  // For partially hedged or unhedged positions
+                  if (marginType === "cross") {
+                    // Cross margin: use account equity for unhedged portion
+                    const equity = baseEquity();
+                    if (!Number.isFinite(equity) || unhedgedSize === 0) return NaN;
+                    // For shorts, liq price is entry + equity/size (price going up)
+                    // For longs, liq price is entry - equity/size (price going down)
+                    if (isShort) {
+                      return position.entryPrice + equity / unhedgedSize;
+                    }
+                    return position.entryPrice - equity / Math.abs(position.size);
+                  } else {
+                    // Isolated margin: use leverage factor for unhedged portion
+                    const liqFactor = position.leverage > 0 ? 1 / position.leverage : 0;
+                    if (isShort) {
+                      // For shorts, liquidation happens when price goes up
+                      return position.entryPrice * (1 + liqFactor);
+                    }
+                    // For longs, liquidation happens when price goes down
+                    return position.entryPrice * (1 - liqFactor);
+                  }
                 };
-                const liqFactor =
-                  position.leverage > 0 ? 1 / position.leverage : 0;
-                const isolatedLiqPrice =
-                  position.size >= 0
-                    ? position.entryPrice * (1 - liqFactor)
-                    : position.entryPrice * (1 + liqFactor);
-                const liqPrice = () =>
-                  marginType === "cross" ? crossLiqPrice() : isolatedLiqPrice;
+
                 const isLong = position.size >= 0;
+
+                // Funding display - show cumulative funding collected or paid
+                const fundingDisplay = () => {
+                  // Get funding rate for this symbol
+                  const market = MARKETS().find(
+                    (m) => m.symbol === position.symbol && m.type === "perps"
+                  );
+                  
+                  // Calculate cumulative funding
+                  // Funding is paid every 8 hours (3 times per day)
+                  // For longs: positive funding rate means paying funding (negative), negative means receiving (positive)
+                  // For shorts: opposite - positive funding rate means receiving funding (positive), negative means paying (negative)
+                  let cumulativeFunding = position.cumulativeFunding ?? 0;
+                  
+                  // If we have a stored cumulative funding value, use it
+                  if (cumulativeFunding !== 0) {
+                    const fundingColor = cumulativeFunding >= 0 ? "text-brand-green-400" : "text-brand-red-400";
+                    return (
+                      <span class={`font-mono ${fundingColor}`}>
+                        {formatSignedUsd(cumulativeFunding)}
+                      </span>
+                    );
+                  }
+                  
+                  // Otherwise, calculate an estimate based on current funding rate and time elapsed
+                  if (market && market.funding !== undefined) {
+                    const fundingRate = market.funding; // Already in decimal form (e.g., 0.0001 = 0.01%)
+                    const positionNotional = Math.abs(position.size) * mark();
+                    const hoursSinceUpdate = (Date.now() - position.updatedAt) / (1000 * 60 * 60);
+                    const fundingPeriods = hoursSinceUpdate / 8; // Funding paid every 8 hours
+                    
+                    // For longs: if funding rate is positive, they pay (negative), if negative, they receive (positive)
+                    // For shorts: opposite
+                    const estimatedFunding = isLong
+                      ? -positionNotional * fundingRate * fundingPeriods
+                      : positionNotional * fundingRate * fundingPeriods;
+                    
+                    const fundingColor = estimatedFunding >= 0 ? "text-brand-green-400" : "text-brand-red-400";
+                    return (
+                      <span class={`font-mono ${fundingColor}`}>
+                        {formatSignedUsd(estimatedFunding)}
+                      </span>
+                    );
+                  }
+                  
+                  return (
+                    <span class="font-mono text-brand-slate-400">--</span>
+                  );
+                };
 
                 return (
                   <tr
@@ -143,6 +222,16 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                         <span class="text-xs text-brand-slate-400">
                           {position.leverage}x
                         </span>
+                        <Show when={isFullyHedged}>
+                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-medium">
+                            HEDGED
+                          </span>
+                        </Show>
+                        <Show when={isPartiallyHedged}>
+                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium">
+                            PARTIAL
+                          </span>
+                        </Show>
                       </div>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
@@ -174,17 +263,25 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                         class={`font-mono ${hasValidPrice() ? (pnl() >= 0 ? "text-brand-green-400" : "text-brand-red-400") : "text-brand-slate-400"}`}
                       >
                         {hasValidPrice()
-                          ? `${formatSignedUsd(pnl())} (${roe().toFixed(2)}%)`
+                          ? `${formatSignedUsd(pnl())} (${isFullyHedged ? "∞" : roe().toFixed(2)}%)`
                           : "--"}
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
                       <span class="font-mono">
-                        {hasValidPrice() &&
-                        Number.isFinite(liqPrice()) &&
-                        liqPrice() > 0
-                          ? formatPrice(liqPrice())
-                          : "--"}
+                        <Show
+                          when={!isFullyHedged}
+                          fallback={
+                            <span class="text-emerald-400 font-medium">None</span>
+                          }
+                        >
+                          {hasValidPrice() &&
+                          liqPrice() !== null &&
+                          Number.isFinite(liqPrice()) &&
+                          (liqPrice() as number) > 0
+                            ? formatPrice(liqPrice() as number)
+                            : "--"}
+                        </Show>
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
@@ -195,7 +292,9 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
-                      <span class="font-mono text-brand-slate-400">0.00</span>
+                      {hasValidPrice() ? fundingDisplay() : (
+                        <span class="font-mono text-brand-slate-400">--</span>
+                      )}
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
                       <button

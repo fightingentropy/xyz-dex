@@ -46,19 +46,16 @@ const formatAmountWithUnit = (
 const spotAssets: {
   symbol: SpotAsset;
   accent: string;
-  roe?: number;
   contract?: string;
 }[] = [
   {
     symbol: "HYPE",
     accent: "text-emerald-300",
-    roe: 10.9,
     contract: "0x0d01...11ec",
   },
   {
     symbol: "BTC",
     accent: "text-amber-300",
-    roe: 3.6,
   },
 ];
 
@@ -200,8 +197,8 @@ const BalancesPanel: Component<{
                   return latestBalance * latestPrice;
                 });
                 const pnl = createMemo(() => {
-                  if (asset.roe == null) return null;
-                  return value() * (asset.roe / 100);
+                  // Spot holdings don't track entry prices, so no PnL to display
+                  return null;
                 });
                 const decimals = asset.symbol === "BTC" ? 6 : 4;
 
@@ -237,14 +234,7 @@ const BalancesPanel: Component<{
                       <span class="font-mono">{formatUsd(value())}</span>
                     </td>
                     <td class={`${cellPadding()} ${textSize()}`}>
-                      <Show
-                        when={pnl() != null}
-                        fallback={<span class="text-brand-slate-500">--</span>}
-                      >
-                        <span class="font-mono text-brand-green-400">
-                          +{formatUsd(pnl() ?? 0)} ({asset.roe?.toFixed(1)}%)
-                        </span>
-                      </Show>
+                      <span class="text-brand-slate-500">--</span>
                     </td>
                     <td class={`${cellPadding()} ${textSize()}`}>
                       <div class="flex items-center gap-4 whitespace-nowrap">

@@ -12,8 +12,10 @@ import {
   getBalance,
   getMarkPriceForSymbol,
   getPositionForSymbol,
+  isPortfolioMarginEnabled,
   placeOrder,
   positions,
+  togglePortfolioMargin,
 } from "../stores/clob";
 import { isAuthenticated } from "../stores/auth";
 import { getSpotBalance, isSpotAsset, placeSpotOrder } from "../stores/wallet";
@@ -40,6 +42,8 @@ const OrderForm: Component = () => {
   const [collateral] = createSignal<Collateral>("USDC");
   const [spotError, setSpotError] = createSignal("");
   const [orderError, setOrderError] = createSignal("");
+  const [marginModeOpen, setMarginModeOpen] = createSignal(false);
+  const [marginModeLoading, setMarginModeLoading] = createSignal(false);
 
   const isLong = () => side() === "long";
   const isSpot = createMemo(() => currentMarketType() === "spot");
@@ -95,13 +99,46 @@ const OrderForm: Component = () => {
     const price = orderPrice();
     return Number.isFinite(price) ? orderSize() * price : 0;
   });
+  // Portfolio margin: calculate spot collateral for short orders
+  const spotBalanceForSymbol = createMemo(() => {
+    if (isSpot()) return 0;
+    const symbol = currentSymbol();
+    return isSpotAsset(symbol) ? getSpotBalance(symbol) : 0;
+  });
+
+  const willUseSpotCollateral = createMemo(() => {
+    if (isSpot() || isLong()) return false;
+    return isPortfolioMarginEnabled() && spotBalanceForSymbol() > 0;
+  });
+
+  const spotCollateralAmount = createMemo(() => {
+    if (!willUseSpotCollateral()) return 0;
+    const shortSize = orderSize();
+    const spotBalance = spotBalanceForSymbol();
+    return Math.min(spotBalance, shortSize);
+  });
+
+  const unhedgedSize = createMemo(() => {
+    if (!willUseSpotCollateral()) return orderSize();
+    return Math.max(0, orderSize() - spotCollateralAmount());
+  });
+
+  const isFullyHedgedPreview = createMemo(() => {
+    return willUseSpotCollateral() && unhedgedSize() <= 0 && orderSize() > 0;
+  });
+
   const marginRequired = createMemo(() => {
     if (isSpot()) return 0;
     if (orderValue() <= 0 || effectiveLeverage() <= 0) return 0;
-    return orderValue() / effectiveLeverage();
+    // Only unhedged portion requires USDC margin
+    const unhedgedValue = unhedgedSize() * orderPrice();
+    return unhedgedValue / effectiveLeverage();
   });
+
   const liquidationPreview = createMemo(() => {
     if (isSpot()) return "--";
+    // Fully hedged positions have no liquidation
+    if (isFullyHedgedPreview()) return "None";
     const price = orderPrice();
     if (!Number.isFinite(price) || price <= 0 || effectiveLeverage() <= 0) {
       return "--";
@@ -153,6 +190,21 @@ const OrderForm: Component = () => {
     });
 
   const spotDecimals = (symbol: string | null) => (symbol === "BTC" ? 6 : 4);
+
+  const marginModeLabel = createMemo(() =>
+    isPortfolioMarginEnabled() ? "Portfolio" : "Classic",
+  );
+
+  const handleToggleMarginMode = async () => {
+    if (!isAuthenticated()) return;
+    setMarginModeLoading(true);
+    const newEnabled = !isPortfolioMarginEnabled();
+    const result = await togglePortfolioMargin(newEnabled);
+    setMarginModeLoading(false);
+    if (result.ok) {
+      setMarginModeOpen(false);
+    }
+  };
 
   const availableLabel = createMemo(() => {
     if (!isSpot()) return "Available to Trade";
@@ -379,8 +431,11 @@ const OrderForm: Component = () => {
               >
                 {leverage()}x
               </button>
-              <button class="rounded-xl bg-brand-border/70 py-2 text-sm font-semibold text-slate-100">
-                Classic
+              <button
+                class="rounded-xl bg-brand-border/70 py-2 text-sm font-semibold text-slate-100"
+                onClick={() => setMarginModeOpen(true)}
+              >
+                {marginModeLabel()}
               </button>
             </div>
             <Show when={leverageMenuOpen()}>
@@ -401,6 +456,109 @@ const OrderForm: Component = () => {
                       {option}x
                     </button>
                   ))}
+                </div>
+              </div>
+            </Show>
+
+            {/* Portfolio Margin Modal */}
+            <Show when={marginModeOpen()}>
+              <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+                <div class="w-full max-w-sm mx-4 rounded-2xl border border-brand-border bg-brand-surface shadow-2xl">
+                  <div class="flex items-center justify-between border-b border-brand-border p-4">
+                    <h3 class="text-lg font-semibold text-slate-100">
+                      Margin Mode
+                    </h3>
+                    <button
+                      class="text-brand-slate-400 hover:text-slate-200 transition-colors"
+                      onClick={() => setMarginModeOpen(false)}
+                    >
+                      <svg
+                        class="w-5 h-5"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path d="M18 6 6 18M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+
+                  <div class="p-4 space-y-4">
+                    {/* Classic Mode Option */}
+                    <button
+                      class={`w-full rounded-xl border p-4 text-left transition-all ${
+                        !isPortfolioMarginEnabled()
+                          ? "border-brand-accent bg-brand-accent/10"
+                          : "border-brand-border hover:border-brand-slate-400"
+                      }`}
+                      onClick={() => {
+                        if (isPortfolioMarginEnabled()) handleToggleMarginMode();
+                      }}
+                      disabled={marginModeLoading()}
+                    >
+                      <div class="flex items-center justify-between">
+                        <span class="font-semibold text-slate-100">Classic</span>
+                        <Show when={!isPortfolioMarginEnabled()}>
+                          <span class="text-xs px-2 py-0.5 rounded-full bg-brand-accent/20 text-brand-accent">
+                            Active
+                          </span>
+                        </Show>
+                      </div>
+                      <p class="mt-1 text-sm text-brand-slate-400">
+                        Standard margin mode. All perp positions are collateralized with USDC only.
+                      </p>
+                    </button>
+
+                    {/* Portfolio Margin Option */}
+                    <button
+                      class={`w-full rounded-xl border p-4 text-left transition-all ${
+                        isPortfolioMarginEnabled()
+                          ? "border-emerald-500 bg-emerald-500/10"
+                          : "border-brand-border hover:border-brand-slate-400"
+                      }`}
+                      onClick={() => {
+                        if (!isPortfolioMarginEnabled()) handleToggleMarginMode();
+                      }}
+                      disabled={marginModeLoading()}
+                    >
+                      <div class="flex items-center justify-between">
+                        <span class="font-semibold text-slate-100">Portfolio Margin</span>
+                        <Show when={isPortfolioMarginEnabled()}>
+                          <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
+                            Active
+                          </span>
+                        </Show>
+                      </div>
+                      <p class="mt-1 text-sm text-brand-slate-400">
+                        Spot holdings collateralize short perps, reducing liquidation risk.
+                      </p>
+                    </button>
+
+                    <Show when={marginModeLoading()}>
+                      <div class="flex items-center justify-center gap-2 text-sm text-brand-slate-400">
+                        <svg
+                          class="w-4 h-4 animate-spin"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <path d="M12 2v4m0 12v4m-8-10h4m12 0h4" />
+                        </svg>
+                        Updating margin mode...
+                      </div>
+                    </Show>
+                  </div>
+
+                  <div class="border-t border-brand-border p-4">
+                    <button
+                      class="w-full rounded-xl bg-brand-border/70 py-2.5 text-sm font-semibold text-slate-100 hover:bg-brand-border transition-colors"
+                      onClick={() => setMarginModeOpen(false)}
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
               </div>
             </Show>
@@ -659,6 +817,46 @@ const OrderForm: Component = () => {
           <div class="text-xs text-brand-red-400">{orderError()}</div>
         </Show>
 
+        {/* Spot Collateral Preview for Short Orders */}
+        <Show when={willUseSpotCollateral() && orderSize() > 0}>
+          <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 space-y-2">
+            <div class="flex items-center gap-2">
+              <svg
+                class="w-4 h-4 text-emerald-400"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <span class="text-sm font-medium text-emerald-400">
+                Portfolio Margin Active
+              </span>
+            </div>
+            <div class="text-xs text-emerald-300/80 space-y-1">
+              <Show when={isFullyHedgedPreview()}>
+                <p>
+                  <span class="font-semibold">{spotCollateralAmount().toFixed(4)} {currentSymbol()}</span> spot
+                  will collateralize this short position.
+                </p>
+                <p class="text-emerald-400 font-medium">
+                  Delta neutral - No liquidation risk
+                </p>
+              </Show>
+              <Show when={!isFullyHedgedPreview()}>
+                <p>
+                  <span class="font-semibold">{spotCollateralAmount().toFixed(4)} {currentSymbol()}</span> spot
+                  collateral + <span class="font-semibold">{formatUsd(marginRequired())}</span> USDC margin
+                </p>
+                <p>
+                  Hedged: {spotCollateralAmount().toFixed(4)} / Unhedged: {unhedgedSize().toFixed(4)} {currentSymbol()}
+                </p>
+              </Show>
+            </div>
+          </div>
+        </Show>
+
         {/* Order Details */}
         <Show
           when={!isSpot()}
@@ -682,7 +880,7 @@ const OrderForm: Component = () => {
               <span class="text-brand-slate-500 underline underline-offset-2 decoration-dashed decoration-brand-slate-500">
                 Liquidation Price
               </span>
-              <span class="text-slate-100 font-mono">
+              <span class={`font-mono ${isFullyHedgedPreview() ? "text-emerald-400 font-medium" : "text-slate-100"}`}>
                 {liquidationPreview()}
               </span>
             </div>
@@ -695,6 +893,11 @@ const OrderForm: Component = () => {
             <div class="flex justify-between">
               <span class="text-brand-slate-500">Margin Required</span>
               <span class="text-slate-100 font-mono">
+                <Show when={willUseSpotCollateral() && spotCollateralAmount() > 0}>
+                  <span class="text-emerald-400 text-xs mr-1">
+                    ({spotCollateralAmount().toFixed(2)} {currentSymbol()} spot)
+                  </span>
+                </Show>
                 {marginRequiredDisplay()}
               </span>
             </div>
