@@ -1,4 +1,5 @@
 import { Component, createSignal } from "solid-js";
+import { authReady, isAuthenticated, login, logout } from "../stores/auth";
 import { showOrderBook, setShowOrderBook } from "../stores/market";
 import { currentPage, setCurrentPage } from "../stores/page";
 
@@ -61,8 +62,16 @@ const Header: Component = () => {
       <div class="flex-1" />
 
       <div class="flex items-center gap-2">
-        <button class="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold text-brand-screen bg-brand-accent rounded-lg hover:bg-brand-accent/80">
-          Connect
+        <button
+          class="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold text-brand-screen bg-brand-accent rounded-lg hover:bg-brand-accent/80 disabled:opacity-60 disabled:cursor-not-allowed"
+          disabled={!authReady()}
+          onClick={() => (isAuthenticated() ? logout() : login())}
+        >
+          {authReady()
+            ? isAuthenticated()
+              ? "Sign out"
+              : "Connect"
+            : "Checking"}
         </button>
 
         {/* Settings Button */}

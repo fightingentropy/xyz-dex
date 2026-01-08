@@ -7,8 +7,11 @@ import OrderForm from "./components/OrderForm";
 import SymbolSearch from "./components/SymbolSearch";
 import Portfolio from "./components/Portfolio";
 import ChartsGrid from "./components/ChartsGrid";
+import TradePanel from "./components/TradePanel";
+import AuthModal from "./components/AuthModal";
 import { useLivePrices, showOrderBook } from "./stores/market";
 import { currentPage, setCurrentPage } from "./stores/page";
+import { authReady, isAuthenticated, login, logout } from "./stores/auth";
 
 const App: Component = () => {
   const [isTabVisible, setIsTabVisible] = createSignal(!document.hidden);
@@ -49,8 +52,16 @@ const App: Component = () => {
               class="object-contain"
             />
           </button>
-          <button class="px-3 py-1.5 text-sm font-semibold text-brand-screen bg-brand-accent rounded-lg">
-            Connect
+          <button
+            class="px-3 py-1.5 text-sm font-semibold text-brand-screen bg-brand-accent rounded-lg disabled:opacity-60 disabled:cursor-not-allowed"
+            disabled={!authReady()}
+            onClick={() => (isAuthenticated() ? logout() : login())}
+          >
+            {authReady()
+              ? isAuthenticated()
+                ? "Sign out"
+                : "Connect"
+              : "Checking"}
           </button>
         </header>
       </Show>
@@ -63,32 +74,11 @@ const App: Component = () => {
         {/* Main Content */}
         <div class="flex flex-1 overflow-hidden">
           {/* Chart Area */}
-          <div class="flex-1 flex flex-col min-w-0">
+          <div class="flex-1 flex flex-col min-w-0 min-h-0">
             <TradingViewChart />
 
             {/* Bottom Panel - Positions/Orders */}
-            <div class="h-48 border-t border-brand-border bg-brand-surface">
-              <div class="flex border-b border-brand-border">
-                <button class="px-4 py-2 text-xs font-medium text-brand-accent border-b-2 border-brand-accent">
-                  Positions
-                </button>
-                <button class="px-4 py-2 text-xs font-medium text-brand-slate-400 hover:text-slate-200">
-                  Open Orders
-                </button>
-                <button class="px-4 py-2 text-xs font-medium text-brand-slate-400 hover:text-slate-200">
-                  Order History
-                </button>
-                <button class="px-4 py-2 text-xs font-medium text-brand-slate-400 hover:text-slate-200">
-                  Trade History
-                </button>
-              </div>
-              <div class="flex items-center justify-center h-full text-brand-slate-500 text-sm">
-                <div class="text-center">
-                  <p class="text-slate-300 mb-1">No open positions</p>
-                  <p class="text-xs">Connect your wallet to start trading</p>
-                </div>
-              </div>
-            </div>
+            <TradePanel />
           </div>
 
           {/* Order Book */}
@@ -186,6 +176,8 @@ const App: Component = () => {
           </button>
         </nav>
       </Show>
+
+      <AuthModal />
 
       {/* Symbol Search Modal */}
       <SymbolSearch />

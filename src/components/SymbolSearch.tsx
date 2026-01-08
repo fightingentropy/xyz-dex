@@ -109,7 +109,7 @@ const SymbolSearch: Component = () => {
       e.preventDefault();
       const market = filteredMarkets()[selectedIdx()];
       if (market) {
-        selectMarket(market.symbol, market.name);
+        selectMarket(market);
       }
     }
   };
@@ -243,7 +243,7 @@ const SymbolSearch: Component = () => {
               <button
                 type="button"
                 class={`grid grid-cols-[minmax(320px,2.4fr)_1.1fr_0.9fr_0.9fr_0.9fr_0.4fr] gap-3 items-center px-5 py-3 text-sm text-slate-200 w-full text-left cursor-pointer min-w-[860px] border-b border-brand-border ${idx() === selectedIdx() ? "bg-[#1e2227] shadow-[inset_0_0_0_1px_#2e3338]" : "bg-[rgba(22,26,30,0.6)] hover:bg-[#1a1e22]"}`}
-                onClick={() => selectMarket(market.symbol, market.name)}
+                onClick={() => selectMarket(market)}
               >
                 <div class="flex flex-col gap-1">
                   <div class="flex items-center gap-2.5 flex-wrap">

@@ -5,7 +5,7 @@ import { normalizeSymbol } from "../lib/binance";
 
 const STORAGE_KEY = "trade-xyz-charts-grid";
 const RESOLUTION_KEY = "trade-xyz-charts-resolution";
-const DEFAULT_SYMBOLS = ["BTC", "ETH", "HYPE", "ZEC"];
+const DEFAULT_SYMBOLS = ["BTC", "HYPE", "BTC", "HYPE"];
 const RESOLUTIONS = ["5", "15", "60", "240", "1D", "1W"] as const;
 type Resolution = (typeof RESOLUTIONS)[number];
 const RESOLUTION_LABELS: Record<Resolution, string> = {
@@ -57,9 +57,9 @@ const loadSymbols = (): string[] => {
 };
 
 const getSymbolOptions = (): string[] => {
-  const set = new Set<string>(DEFAULT_SYMBOLS);
+  const set = new Set<string>();
   MARKETS.forEach((market) => set.add(market.symbol));
-  set.add("ZEC");
+  DEFAULT_SYMBOLS.forEach((symbol) => set.add(symbol));
   return Array.from(set).sort();
 };
 

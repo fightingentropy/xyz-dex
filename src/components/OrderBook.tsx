@@ -1,94 +1,12 @@
-import {
-  Component,
-  For,
-  createMemo,
-  createSignal,
-  createEffect,
-  onCleanup,
-  onMount,
-} from "solid-js";
+import { Component, For, createMemo } from "solid-js";
 import { currentSymbol, markPrice } from "../stores/market";
-import { fetchL2Book, OrderBookLevel } from "../lib/binance";
+import { getOrderBook } from "../stores/clob";
 
 const OrderBook: Component = () => {
-  const [asks, setAsks] = createSignal<OrderBookLevel[]>([]);
-  const [bids, setBids] = createSignal<OrderBookLevel[]>([]);
-  const [spread, setSpread] = createSignal(0);
-  const [spreadPercent, setSpreadPercent] = createSignal(0);
-  const [isTabVisible, setIsTabVisible] = createSignal(!document.hidden);
-  let pollTimer: number | undefined;
-  let controller: AbortController | undefined;
-  let requestId = 0;
-
-  const handleVisibilityChange = () => {
-    setIsTabVisible(!document.hidden);
-  };
-
-  onMount(() => {
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-  });
-
-  const fetchOrderBook = async (coin: string) => {
-    const currentRequestId = ++requestId;
-    controller?.abort();
-    const nextController = new AbortController();
-    controller = nextController;
-
-    const book = await fetchL2Book(coin, nextController.signal);
-    if (book) {
-      if (
-        currentRequestId !== requestId ||
-        nextController.signal.aborted ||
-        !isTabVisible() ||
-        currentSymbol() !== coin
-      ) {
-        return;
-      }
-      setAsks(book.asks);
-      setBids(book.bids);
-
-      // Calculate spread
-      if (book.asks.length > 0 && book.bids.length > 0) {
-        const bestAsk = book.asks[book.asks.length - 1]?.price || 0;
-        const bestBid = book.bids[0]?.price || 0;
-        const spreadVal = bestAsk - bestBid;
-        setSpread(spreadVal);
-        if (bestBid > 0) {
-          setSpreadPercent((spreadVal / bestBid) * 100);
-        }
-      }
-    }
-  };
-
-  // Start polling and react to symbol changes
-  createEffect(() => {
-    const coin = currentSymbol();
-    const visible = isTabVisible();
-
-    // Clear previous timer
-    if (pollTimer) {
-      clearInterval(pollTimer);
-      pollTimer = undefined;
-    }
-    controller?.abort();
-
-    if (!visible) return;
-
-    // Initial fetch
-    fetchOrderBook(coin);
-
-    // Poll every 1 second for order book updates
-    pollTimer = setInterval(
-      () => fetchOrderBook(coin),
-      1000,
-    ) as unknown as number;
-  });
-
-  onCleanup(() => {
-    if (pollTimer) clearInterval(pollTimer);
-    controller?.abort();
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
-  });
+  const book = createMemo(() => getOrderBook(currentSymbol()));
+  const bids = createMemo(() => book().bids);
+  const asks = createMemo(() => book().asks);
+  const asksForDisplay = createMemo(() => [...asks()].reverse());
 
   const formatSize = (size: number) => size.toFixed(2);
 
@@ -116,11 +34,25 @@ const OrderBook: Component = () => {
     return 5;
   });
 
+  const spread = createMemo(() => {
+    const bestAsk = asks()[0]?.price || 0;
+    const bestBid = bids()[0]?.price || 0;
+    return bestAsk - bestBid;
+  });
+
+  const spreadPercent = createMemo(() => {
+    const bestBid = bids()[0]?.price || 0;
+    if (bestBid <= 0) return 0;
+    return (spread() / bestBid) * 100;
+  });
+
   return (
     <div class="flex flex-col h-full bg-brand-surface border-l border-brand-border">
       {/* Header */}
       <div class="flex items-center justify-between px-3 py-2 border-b border-brand-border">
-        <span class="text-xs font-medium text-slate-200">Order Book</span>
+        <span class="text-xs font-medium text-slate-200">
+          Order Book (CLOB)
+        </span>
         <div class="flex gap-1">
           <button class="p-1 rounded hover:bg-slate-800">
             <svg
@@ -154,7 +86,7 @@ const OrderBook: Component = () => {
 
       {/* Asks */}
       <div class="flex-1 overflow-hidden flex flex-col justify-end">
-        <For each={asks()}>
+        <For each={asksForDisplay()}>
           {(level) => (
             <div class="grid grid-cols-3 gap-2 px-3 py-0.5 text-xs relative">
               <div

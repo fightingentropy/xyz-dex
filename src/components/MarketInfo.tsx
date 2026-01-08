@@ -1,6 +1,8 @@
 import { Component } from "solid-js";
 import {
   currentMarket,
+  currentMarketLeverage,
+  currentMarketType,
   currentSymbol,
   markPrice,
   oraclePrice,
@@ -29,6 +31,8 @@ const ChevronDown = () => (
 );
 
 const MarketInfo: Component = () => {
+  const leverageLabel = () =>
+    currentMarketType() === "spot" ? "Spot" : currentMarketLeverage();
   const changeColor = () => {
     const val = change24h();
     if (!Number.isFinite(val)) return "text-brand-slate-500";
@@ -58,7 +62,7 @@ const MarketInfo: Component = () => {
         </div>
         <span class="font-semibold text-slate-100">{currentMarket()}</span>
         <span class="text-xs px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded">
-          10x
+          {leverageLabel()}
         </span>
         <ChevronDown />
       </button>

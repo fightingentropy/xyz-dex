@@ -54,6 +54,40 @@ npm run build
 npm run preview
 ```
 
+## Auth (custom JWT)
+This project uses a custom email/password flow backed by Convex (no Auth0). Set
+these in `.env.local`:
+
+```
+CUSTOM_AUTH_ISSUER=http://127.0.0.1:3210
+CUSTOM_AUTH_JWKS_URL=http://127.0.0.1:3210/.well-known/jwks.json
+CUSTOM_AUTH_AUDIENCE=trade-xyz
+CUSTOM_AUTH_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nREPLACE_ME\n-----END PRIVATE KEY-----
+CUSTOM_AUTH_PUBLIC_JWK={"kty":"RSA","kid":"trade-xyz-dev","use":"sig","alg":"RS256","n":"REPLACE_ME","e":"AQAB"}
+# Optional: override the kid used in JWT headers
+# CUSTOM_AUTH_KEY_ID=trade-xyz-dev
+```
+
+Generate a local RSA key:
+
+```
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out dev_private.pem
+```
+
+Then flatten it for `.env.local`:
+
+```
+awk 'BEGIN{printf "CUSTOM_AUTH_PRIVATE_KEY="} {printf "%s\\n",$0} END{print ""}' dev_private.pem
+```
+
+Generate the public JWK (single line) and paste into `CUSTOM_AUTH_PUBLIC_JWK`:
+
+```
+node -e "const { createPublicKey } = require('crypto'); const fs = require('fs'); const key = fs.readFileSync('dev_private.pem'); const jwk = createPublicKey(key).export({ format: 'jwk' }); jwk.use='sig'; jwk.alg='RS256'; jwk.kid='trade-xyz-dev'; console.log(JSON.stringify(jwk));"
+```
+
+If you change `kid`, also set `CUSTOM_AUTH_KEY_ID` to match.
+
 ## Notes
 - Routes are handled manually via `window.history`:
   - `/trade` or `/trade/SYMBOL`

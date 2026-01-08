@@ -35,27 +35,15 @@ export const MARKETS: Market[] = [
     watchlist: true,
   },
   {
-    symbol: "ETH",
-    name: "ETH-USDT",
-    price: "3,034.5",
-    change24h: -1.04,
-    volume24h: 782.5e6,
-    openInterest: 1425.91e6,
-    funding: 0.0008,
-    type: "perps",
-    leverage: "50x",
-    watchlist: true,
-  },
-  {
-    symbol: "SOL",
-    name: "SOL-USDT",
-    price: "122.12",
-    change24h: -1.1,
-    volume24h: 409.13e6,
-    openInterest: 445.0e6,
-    funding: 0.0013,
-    type: "perps",
-    leverage: "20x",
+    symbol: "BTC",
+    name: "BTC-USDT (Spot)",
+    price: "68,435",
+    change24h: -0.62,
+    volume24h: 980.21e6,
+    openInterest: 0,
+    funding: 0,
+    type: "spot",
+    leverage: "Spot",
     watchlist: true,
   },
   {
@@ -71,130 +59,23 @@ export const MARKETS: Market[] = [
     watchlist: true,
   },
   {
-    symbol: "BNB",
-    name: "BNB-USDT",
-    price: "598.20",
-    change24h: -0.45,
-    volume24h: 338.92e6,
-    openInterest: 285.41e6,
-    funding: 0.001,
-    type: "perps",
-    leverage: "20x",
-    watchlist: false,
-  },
-  {
-    symbol: "XRP",
-    name: "XRP-USDT",
-    price: "0.5582",
-    change24h: 0.42,
-    volume24h: 298.18e6,
-    openInterest: 167.43e6,
-    funding: 0.0005,
-    type: "perps",
-    leverage: "20x",
-    watchlist: false,
-  },
-  {
-    symbol: "ADA",
-    name: "ADA-USDT",
-    price: "0.458",
-    change24h: 0.53,
-    volume24h: 118.42e6,
-    openInterest: 65.18e6,
-    funding: 0.0007,
+    symbol: "HYPE",
+    name: "HYPE-USDT (Spot)",
+    price: "24.996",
+    change24h: 0.35,
+    volume24h: 98.4e6,
+    openInterest: 0,
+    funding: 0,
     type: "spot",
-    leverage: "10x",
-    watchlist: false,
-  },
-  {
-    symbol: "DOGE",
-    name: "DOGE-USDT",
-    price: "0.158",
-    change24h: 1.08,
-    volume24h: 212.95e6,
-    openInterest: 98.72e6,
-    funding: 0.0009,
-    type: "spot",
-    leverage: "10x",
+    leverage: "Spot",
     watchlist: true,
-  },
-  {
-    symbol: "AVAX",
-    name: "AVAX-USDT",
-    price: "21.45",
-    change24h: -1.12,
-    volume24h: 145.28e6,
-    openInterest: 62.15e6,
-    funding: 0.0012,
-    type: "perps",
-    leverage: "20x",
-    watchlist: false,
-  },
-  {
-    symbol: "LINK",
-    name: "LINK-USDT",
-    price: "17.29",
-    change24h: 1.25,
-    volume24h: 55.06e6,
-    openInterest: 44.85e6,
-    funding: 0.0006,
-    type: "spot",
-    leverage: "10x",
-    watchlist: false,
-  },
-  {
-    symbol: "DOT",
-    name: "DOT-USDT",
-    price: "6.58",
-    change24h: -0.32,
-    volume24h: 38.92e6,
-    openInterest: 25.41e6,
-    funding: 0.0008,
-    type: "spot",
-    leverage: "10x",
-    watchlist: false,
-  },
-  {
-    symbol: "LTC",
-    name: "LTC-USDT",
-    price: "91.29",
-    change24h: 0.66,
-    volume24h: 55.06e6,
-    openInterest: 24.85e6,
-    funding: 0.0005,
-    type: "perps",
-    leverage: "10x",
-    watchlist: false,
-  },
-  {
-    symbol: "ATOM",
-    name: "ATOM-USDT",
-    price: "9.58",
-    change24h: 0.53,
-    volume24h: 18.42e6,
-    openInterest: 25.18e6,
-    funding: 0.0011,
-    type: "spot",
-    leverage: "10x",
-    watchlist: false,
   },
 ];
 
 // Ticker data for marquee
 export const TICKER_DATA = [
   { symbol: "BTC", change: -1.03 },
-  { symbol: "ETH", change: -1.04 },
-  { symbol: "SOL", change: -1.45 },
   { symbol: "HYPE", change: 0.29 },
-  { symbol: "BNB", change: -0.45 },
-  { symbol: "XRP", change: 0.42 },
-  { symbol: "ADA", change: 0.53 },
-  { symbol: "DOGE", change: 1.08 },
-  { symbol: "AVAX", change: -1.12 },
-  { symbol: "LINK", change: 1.25 },
-  { symbol: "DOT", change: -0.32 },
-  { symbol: "LTC", change: 0.66 },
-  { symbol: "ATOM", change: 0.53 },
 ];
 
 // Settings persistence
@@ -250,8 +131,30 @@ const saveLastSymbol = (symbol: string) => {
 
 // Create reactive market store
 const initialSymbol = loadLastSymbol();
+const findMarket = (symbol: string, preferredType?: Market["type"]) => {
+  if (preferredType) {
+    const preferred = MARKETS.find(
+      (market) => market.symbol === symbol && market.type === preferredType,
+    );
+    if (preferred) return preferred;
+  }
+  return (
+    MARKETS.find(
+      (market) => market.symbol === symbol && market.type === "perps",
+    ) ?? MARKETS.find((market) => market.symbol === symbol)
+  );
+};
+const initialMarket = findMarket(initialSymbol, "perps");
 const [currentSymbol, setCurrentSymbolInternal] = createSignal(initialSymbol);
-const [currentMarket, setCurrentMarket] = createSignal(`${initialSymbol}-USDT`);
+const [currentMarket, setCurrentMarket] = createSignal(
+  initialMarket?.name ?? `${initialSymbol}-USDT`,
+);
+const [currentMarketType, setCurrentMarketTypeInternal] = createSignal<
+  Market["type"]
+>(initialMarket?.type ?? "perps");
+const [currentMarketLeverage, setCurrentMarketLeverageInternal] = createSignal(
+  initialMarket?.leverage ?? "10x",
+);
 const [markPrice, setMarkPrice] = createSignal("--");
 const [oraclePrice, setOraclePrice] = createSignal("--");
 const [change24h, setChange24h] = createSignal(0);
@@ -278,6 +181,12 @@ const setCurrentSymbol = (value: string | ((prev: string) => string)) => {
     : DEFAULT_SYMBOL;
   setCurrentSymbolInternal(normalized);
   saveLastSymbol(normalized);
+  const matched = findMarket(normalized, "perps");
+  if (matched) {
+    setCurrentMarket(matched.name);
+    setCurrentMarketTypeInternal(matched.type);
+    setCurrentMarketLeverageInternal(matched.leverage);
+  }
 };
 
 export {
@@ -285,6 +194,8 @@ export {
   setCurrentSymbol,
   currentMarket,
   setCurrentMarket,
+  currentMarketType,
+  currentMarketLeverage,
   markPrice,
   setMarkPrice,
   oraclePrice,
@@ -303,16 +214,22 @@ export {
   setShowOrderBook,
 };
 
-export const selectMarket = (symbol: string, name: string) => {
-  setCurrentSymbol(symbol);
-  setCurrentMarket(name);
+export const selectMarket = (market: Market) => {
+  setCurrentSymbol(market.symbol);
+  setCurrentMarket(market.name);
+  setCurrentMarketTypeInternal(market.type);
+  setCurrentMarketLeverageInternal(market.leverage);
   setSearchOpen(false);
 
   // Update URL to reflect the new symbol
-  window.history.pushState({ page: "trade", symbol }, "", `/trade/${symbol}`);
+  window.history.pushState(
+    { page: "trade", symbol: market.symbol },
+    "",
+    `/trade/${market.symbol}`,
+  );
 
   // Update document title
-  document.title = `${markPrice()} | ${name} | Trade XYZ`;
+  document.title = `${markPrice()} | ${market.name} | Trade XYZ`;
 };
 
 // Live price polling

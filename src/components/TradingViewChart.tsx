@@ -651,7 +651,7 @@ const TradingViewChart: Component = () => {
   });
 
   return (
-    <div class="chart-container bg-brand-screen relative flex flex-col">
+    <div class="chart-container trade-chart bg-brand-screen relative flex flex-col flex-1 min-h-0">
       {/* Resolution toolbar */}
       <div class="flex items-center gap-1 px-3 py-2 border-b border-brand-border bg-brand-surface/50">
         {RESOLUTIONS.map((res) => (
