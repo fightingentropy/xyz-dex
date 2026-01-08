@@ -22,11 +22,30 @@ type FilterType = "all" | "perps-xyz" | "perps-hl" | "spot" | "watchlist";
 type SortColumn = "volume" | "openInterest" | "funding" | "change";
 type SortDirection = "asc" | "desc";
 
+const SearchIcon: Component<{ class?: string }> = (props) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    class={props.class ?? "w-4 h-4"}
+  >
+    <circle cx="11" cy="11" r="8" />
+    <path d="m21 21-4.3-4.3" />
+  </svg>
+);
+
 const StarIcon: Component<{ active?: boolean }> = (props) => (
   <svg
     viewBox="0 0 24 24"
     aria-hidden="true"
-    class={`w-3.5 h-3.5 ${props.active ? "fill-amber-400 text-amber-400" : "fill-transparent text-brand-slate-600 stroke-current stroke-2"}`}
+    class={`w-4 h-4 transition-all duration-200 ${
+      props.active
+        ? "fill-amber-400 text-amber-400 drop-shadow-[0_0_6px_rgba(251,191,36,0.5)]"
+        : "fill-transparent text-slate-600 stroke-current stroke-[1.5] hover:text-slate-400"
+    }`}
   >
     <path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.77 5.82 22 7 14.14 2 9.27l6.91-1.01L12 2z" />
   </svg>
@@ -37,7 +56,7 @@ const ChevronDownIcon: Component<{ class?: string }> = (props) => (
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    stroke-width="2"
+    stroke-width="2.5"
     stroke-linecap="round"
     stroke-linejoin="round"
     class={props.class ?? "w-3 h-3"}
@@ -46,40 +65,54 @@ const ChevronDownIcon: Component<{ class?: string }> = (props) => (
   </svg>
 );
 
-const getIconClass = (symbol: string): string => {
+const TrendingUpIcon: Component<{ class?: string }> = (props) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class={props.class ?? "w-3.5 h-3.5"}>
+    <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+    <polyline points="17 6 23 6 23 12" />
+  </svg>
+);
+
+const TrendingDownIcon: Component<{ class?: string }> = (props) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class={props.class ?? "w-3.5 h-3.5"}>
+    <polyline points="23 18 13.5 8.5 8.5 13.5 1 6" />
+    <polyline points="17 18 23 18 23 12" />
+  </svg>
+);
+
+const getIconGradient = (symbol: string): string => {
   switch (symbol) {
     case "BTC":
-      return "bg-amber-500 text-brand-screen";
+      return "from-amber-500 to-orange-600";
     case "ETH":
-      return "bg-slate-400 text-brand-screen";
+      return "from-slate-400 to-indigo-500";
     case "SOL":
-      return "bg-gradient-to-br from-emerald-400 to-fuchsia-500 text-brand-screen";
+      return "from-emerald-400 to-fuchsia-500";
     case "HYPE":
-      return "bg-brand-screen text-emerald-300 border border-brand-border";
+      return "from-emerald-400 to-cyan-400";
     case "BNB":
-      return "bg-amber-400 text-brand-screen";
+      return "from-amber-400 to-yellow-500";
     case "XRP":
-      return "bg-slate-500 text-brand-screen";
+      return "from-slate-400 to-slate-600";
     case "ADA":
-      return "bg-indigo-400 text-brand-screen";
+      return "from-indigo-400 to-blue-600";
     case "DOGE":
-      return "bg-yellow-300 text-brand-screen";
+      return "from-yellow-300 to-amber-500";
     case "LINK":
-      return "bg-sky-400 text-brand-screen";
+      return "from-sky-400 to-blue-600";
     case "DOT":
-      return "bg-pink-400 text-brand-screen";
+      return "from-pink-400 to-fuchsia-600";
     case "LTC":
-      return "bg-slate-300 text-brand-screen";
+      return "from-slate-300 to-slate-500";
     case "AVAX":
-      return "bg-red-400 text-brand-screen";
+      return "from-red-400 to-rose-600";
     case "ZEC":
-      return "bg-amber-300 text-brand-screen";
+      return "from-amber-300 to-yellow-500";
     case "FARTCOIN":
-      return "bg-slate-700 text-slate-200";
+      return "from-emerald-600 to-teal-700";
     case "XYZ100":
-      return "bg-sky-600 text-white";
+      return "from-sky-500 to-indigo-600";
     default:
-      return "bg-slate-700 text-slate-200";
+      return "from-slate-600 to-slate-700";
   }
 };
 
@@ -96,12 +129,13 @@ const getIconLabel = (symbol: string): string => {
 const SymbolSearch: Component = () => {
   const [query, setQuery] = createSignal("");
   const [filter, setFilter] = createSignal<FilterType>("all");
-  const [strictMode, setStrictMode] = createSignal(true);
   const [selectedIdx, setSelectedIdx] = createSignal(0);
   const [sortColumn, setSortColumn] = createSignal<SortColumn>("volume");
   const [sortDirection, setSortDirection] = createSignal<SortDirection>("desc");
   let inputRef: HTMLInputElement | undefined;
   let listRef: HTMLDivElement | undefined;
+
+  const ALLOWED_SYMBOLS = ["BTC", "ETH", "SOL", "HYPE", "ZEC"];
 
   const filteredMarkets = createMemo(() => {
     const q = query().toLowerCase();
@@ -109,6 +143,9 @@ const SymbolSearch: Component = () => {
     const allMarkets = MARKETS();
 
     let results = allMarkets.filter((m) => {
+      // Only show allowed symbols
+      if (!ALLOWED_SYMBOLS.includes(m.symbol)) return false;
+
       const matchesQuery =
         !q ||
         m.name.toLowerCase().includes(q) ||
@@ -240,11 +277,14 @@ const SymbolSearch: Component = () => {
     const price = parseFloat(market.price.replace(/,/g, ""));
     const changePercent = market.change24h;
     const priceChange = (price * changePercent) / 100;
-    
+
     const absChange = Math.abs(priceChange);
     let absFormatted: string;
     if (absChange >= 1000) {
-      absFormatted = absChange.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      absFormatted = absChange.toLocaleString("en-US", {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      });
     } else if (absChange >= 1) {
       absFormatted = absChange.toFixed(2);
     } else if (absChange >= 0.01) {
@@ -252,298 +292,234 @@ const SymbolSearch: Component = () => {
     } else {
       absFormatted = absChange.toFixed(6);
     }
-    
+
     const sign = priceChange >= 0 ? "+" : "-";
-    return `${sign}${absFormatted} / ${formatPercent(changePercent)}`;
+    return { sign, absFormatted, percent: formatPercent(changePercent) };
   };
+
+  const filterTabs = [
+    { id: "all" as FilterType, label: "All" },
+    { id: "perps-xyz" as FilterType, label: "Perps", badge: "XYZ" },
+    { id: "perps-hl" as FilterType, label: "Perps", icon: "/hyperliquid.svg" },
+    { id: "spot" as FilterType, label: "Spot" },
+    { id: "watchlist" as FilterType, label: "Watchlist", emoji: "⭐" },
+  ];
 
   return (
     <div
       class={`symbol-search-overlay ${searchOpen() ? "is-open" : ""}`}
       onClick={(e) => e.target === e.currentTarget && setSearchOpen(false)}
     >
-      <div class="w-[min(920px,95vw)] max-h-[75vh] bg-[#0d1014] border border-brand-border rounded-lg shadow-2xl flex flex-col overflow-hidden">
+      <div class="symbol-search-modal">
         {/* Search Header */}
-        <div class="flex items-center gap-2 px-3 py-2.5 border-b border-brand-border">
-          <input
-            ref={inputRef}
-            type="text"
-            placeholder={`Search ${MARKETS().length} live markets`}
-            class="flex-1 bg-transparent border-0 text-sm text-slate-300 placeholder:text-brand-slate-500 font-normal"
-            value={query()}
-            onInput={(e) => {
-              setQuery(e.currentTarget.value);
-              setSelectedIdx(0);
-            }}
-            onKeyDown={handleKeyDown}
-          />
-          <button
-            class="bg-slate-800 border border-slate-700 text-brand-slate-400 rounded px-1.5 py-0.5 text-[10px] hover:bg-slate-700"
-            onClick={() => setSearchOpen(false)}
-          >
-            esc
-          </button>
+        <div class="search-header">
+          <div class="search-input-wrapper">
+            <SearchIcon class="search-icon" />
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder={`Search ${MARKETS().length} markets...`}
+              class="search-input"
+              value={query()}
+              onInput={(e) => {
+                setQuery(e.currentTarget.value);
+                setSelectedIdx(0);
+              }}
+              onKeyDown={handleKeyDown}
+            />
+            <div class="search-shortcut">
+              <kbd>esc</kbd>
+            </div>
+          </div>
         </div>
 
         {/* Filter Tabs */}
-        <div class="flex items-center justify-between px-3 py-2 border-b border-brand-border bg-[#0d1014]">
-          <div class="flex items-center gap-0.5">
-            <button
-              class={`px-2.5 py-1 rounded text-xs transition-colors ${
-                filter() === "all"
-                  ? "bg-[#1a1e24] text-white"
-                  : "text-brand-slate-400 hover:text-slate-200 hover:bg-[#13161b]"
-              }`}
-              onClick={() => setFilter("all")}
-            >
-              All
-            </button>
-            <button
-              class={`px-2.5 py-1 rounded text-xs flex items-center gap-1 transition-colors ${
-                filter() === "perps-xyz"
-                  ? "bg-[#1a1e24] text-white"
-                  : "text-brand-slate-400 hover:text-slate-200 hover:bg-[#13161b]"
-              }`}
-              onClick={() => setFilter("perps-xyz")}
-            >
-              Perps
-              <span class="text-amber-400 font-medium">[XYZ]</span>
-            </button>
-            <button
-              class={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-colors ${
-                filter() === "perps-hl"
-                  ? "bg-[#1a1e24] text-white"
-                  : "text-brand-slate-400 hover:text-slate-200 hover:bg-[#13161b]"
-              }`}
-              onClick={() => setFilter("perps-hl")}
-            >
-              Perps
-              <img src="/hyperliquid.svg" alt="" class="w-4 h-4" />
-            </button>
-            <button
-              class={`px-2.5 py-1 rounded text-xs transition-colors ${
-                filter() === "spot"
-                  ? "bg-[#1a1e24] text-white"
-                  : "text-brand-slate-400 hover:text-slate-200 hover:bg-[#13161b]"
-              }`}
-              onClick={() => setFilter("spot")}
-            >
-              Spot
-            </button>
-            <button
-              class={`px-2.5 py-1 rounded text-xs transition-colors ${
-                filter() === "watchlist"
-                  ? "bg-[#1a1e24] text-white"
-                  : "text-brand-slate-400 hover:text-slate-200 hover:bg-[#13161b]"
-              }`}
-              onClick={() => setFilter("watchlist")}
-            >
-              Watchlist
-            </button>
-          </div>
-
-          {/* Strict / All Toggle */}
-          <div class="flex items-center bg-[#1a1e24] rounded p-0.5">
-            <button
-              class={`px-2 py-1 rounded text-xs transition-colors ${
-                strictMode()
-                  ? "bg-brand-accent text-brand-screen font-medium"
-                  : "text-brand-slate-400 hover:text-slate-200"
-              }`}
-              onClick={() => setStrictMode(true)}
-            >
-              Strict
-            </button>
-            <button
-              class={`px-2 py-1 rounded text-xs transition-colors ${
-                !strictMode()
-                  ? "bg-brand-accent text-brand-screen font-medium"
-                  : "text-brand-slate-400 hover:text-slate-200"
-              }`}
-              onClick={() => setStrictMode(false)}
-            >
-              All
-            </button>
+        <div class="filter-section">
+          <div class="filter-tabs">
+            <For each={filterTabs}>
+              {(tab) => (
+                <button
+                  class={`filter-tab ${filter() === tab.id ? "active" : ""}`}
+                  onClick={() => setFilter(tab.id)}
+                >
+                  {tab.emoji && <span class="tab-emoji">{tab.emoji}</span>}
+                  <span>{tab.label}</span>
+                  {tab.badge && <span class="tab-badge">{tab.badge}</span>}
+                  {tab.icon && <img src={tab.icon} alt="" class="tab-icon" />}
+                </button>
+              )}
+            </For>
           </div>
         </div>
 
         {/* Table Header */}
-        <div class="grid grid-cols-[minmax(180px,1.8fr)_1.1fr_0.9fr_0.9fr_0.7fr_0.25fr] gap-2 px-3 py-2 text-[10px] text-brand-slate-500 border-b border-brand-border min-w-[680px]">
-          <div>Market</div>
+        <div class="table-header">
+          <div class="th-cell th-market">Market</div>
           <button
-            class="flex items-center gap-1 hover:text-slate-300 transition-colors text-left"
+            class={`th-cell th-sortable ${sortColumn() === "change" ? "active" : ""}`}
             onClick={() => handleSort("change")}
           >
-            Price Change
+            <span>24h Change</span>
             <Show when={sortColumn() === "change"}>
               <ChevronDownIcon
-                class={`w-2.5 h-2.5 transition-transform ${sortDirection() === "asc" ? "rotate-180" : ""}`}
+                class={`th-sort-icon ${sortDirection() === "asc" ? "asc" : ""}`}
               />
             </Show>
           </button>
           <button
-            class="flex items-center gap-1 hover:text-slate-300 transition-colors text-left"
+            class={`th-cell th-sortable ${sortColumn() === "volume" ? "active" : ""}`}
             onClick={() => handleSort("volume")}
           >
-            Volume
+            <span>Volume</span>
             <Show when={sortColumn() === "volume"}>
               <ChevronDownIcon
-                class={`w-2.5 h-2.5 transition-transform ${sortDirection() === "asc" ? "rotate-180" : ""}`}
+                class={`th-sort-icon ${sortDirection() === "asc" ? "asc" : ""}`}
               />
             </Show>
           </button>
           <button
-            class="flex items-center gap-1 hover:text-slate-300 transition-colors text-left"
+            class={`th-cell th-sortable ${sortColumn() === "openInterest" ? "active" : ""}`}
             onClick={() => handleSort("openInterest")}
           >
-            Open Interest
+            <span>Open Interest</span>
             <Show when={sortColumn() === "openInterest"}>
               <ChevronDownIcon
-                class={`w-2.5 h-2.5 transition-transform ${sortDirection() === "asc" ? "rotate-180" : ""}`}
+                class={`th-sort-icon ${sortDirection() === "asc" ? "asc" : ""}`}
               />
             </Show>
           </button>
           <button
-            class="flex items-center gap-1 hover:text-slate-300 transition-colors text-left"
+            class={`th-cell th-sortable ${sortColumn() === "funding" ? "active" : ""}`}
             onClick={() => handleSort("funding")}
           >
-            Funding
+            <span>Funding</span>
             <Show when={sortColumn() === "funding"}>
               <ChevronDownIcon
-                class={`w-2.5 h-2.5 transition-transform ${sortDirection() === "asc" ? "rotate-180" : ""}`}
+                class={`th-sort-icon ${sortDirection() === "asc" ? "asc" : ""}`}
               />
             </Show>
           </button>
-          <div></div>
+          <div class="th-cell th-action"></div>
         </div>
 
         {/* Market Rows */}
-        <div ref={listRef} class="overflow-auto flex-1">
+        <div ref={listRef} class="market-list">
           <Show when={marketsLoading()}>
-            <div class="flex items-center justify-center py-12 text-brand-slate-400 text-sm">
-              <svg class="animate-spin -ml-1 mr-3 h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              Loading markets...
+            <div class="loading-state">
+              <div class="loading-spinner" />
+              <span>Loading markets...</span>
             </div>
           </Show>
           <For each={filteredMarkets()}>
-            {(market, idx) => (
-              <button
-                type="button"
-                data-idx={idx()}
-                class={`grid grid-cols-[minmax(180px,1.8fr)_1.1fr_0.9fr_0.9fr_0.7fr_0.25fr] gap-2 items-center px-3 py-2 text-xs text-slate-200 w-full text-left cursor-pointer min-w-[680px] border-b border-brand-border/50 transition-colors ${
-                  idx() === selectedIdx()
-                    ? "bg-[#171b20]"
-                    : "bg-[#0d1014] hover:bg-[#13161b]"
-                }`}
-                onClick={() => selectMarket(market)}
-              >
-                <div class="flex flex-col gap-0">
-                  <div class="flex items-center gap-2">
-                    <span
-                      class={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 ${getIconClass(market.symbol)}`}
+            {(market, idx) => {
+              const change = formatPriceChange(market);
+              const isPositive = market.change24h >= 0;
+
+              return (
+                <button
+                  type="button"
+                  data-idx={idx()}
+                  class={`market-row ${idx() === selectedIdx() ? "selected" : ""}`}
+                  onClick={() => selectMarket(market)}
+                >
+                  <div class="market-info">
+                    <Show
+                      when={["BTC", "ETH", "HYPE", "SOL", "ZEC"].includes(market.symbol)}
+                      fallback={
+                        <div class={`market-icon bg-gradient-to-br ${getIconGradient(market.symbol)}`}>
+                          <span>{getIconLabel(market.symbol)}</span>
+                        </div>
+                      }
                     >
-                      {getIconLabel(market.symbol)}
-                    </span>
-                    <span class="font-medium text-slate-100 text-xs">
-                      {market.type === "equities" ? `[${market.name}]` : market.name}
-                    </span>
-                    <span class="bg-[#1e2328] text-slate-400 rounded px-1 py-0.5 text-[9px]">
-                      {market.leverage}
-                    </span>
-                    {market.type === "equities" && (
-                      <span class="bg-[rgba(80,227,171,0.15)] text-brand-accent rounded px-1 py-0.5 text-[9px]">
-                        xyz
+                      <div class="market-icon">
+                        <img src={`/${market.symbol.toLowerCase()}.svg`} alt={market.symbol} class="coin-logo" />
+                      </div>
+                    </Show>
+                    <div class="market-details">
+                      <div class="market-name-row">
+                        <span class="market-name">
+                          {market.type === "equities"
+                            ? `[${market.name}]`
+                            : market.name}
+                        </span>
+                        <span class="leverage-badge">{market.leverage}</span>
+                        {market.type === "equities" && (
+                          <span class="xyz-badge">XYZ</span>
+                        )}
+                      </div>
+                      <span class="market-price">${market.price}</span>
+                    </div>
+                  </div>
+
+                  <div class={`change-cell ${isPositive ? "positive" : "negative"}`}>
+                    <div class="change-indicator">
+                      {isPositive ? (
+                        <TrendingUpIcon class="trend-icon" />
+                      ) : (
+                        <TrendingDownIcon class="trend-icon" />
+                      )}
+                    </div>
+                    <div class="change-values">
+                      <span class="change-absolute">
+                        {change.sign}${change.absFormatted}
                       </span>
-                    )}
+                      <span class="change-percent">{change.percent}</span>
+                    </div>
                   </div>
-                  <div class="text-brand-slate-500 text-[10px] ml-7">
-                    {market.price}
+
+                  <div class="volume-cell">
+                    <span class="volume-value">{formatVolume(market.volume24h)}</span>
                   </div>
-                </div>
-                <div
-                  class={`font-mono text-xs ${
-                    market.change24h >= 0
-                      ? "text-brand-green-400"
-                      : "text-brand-red-400"
-                  }`}
-                >
-                  {formatPriceChange(market)}
-                </div>
-                <div class="text-slate-300 text-xs">{formatVolume(market.volume24h)}</div>
-                <div class="text-slate-300 text-xs">{formatVolume(market.openInterest)}</div>
-                <div
-                  class={`text-xs ${
-                    market.funding >= 0
-                      ? "text-brand-green-400"
-                      : "text-brand-red-400"
-                  }`}
-                >
-                  {formatPercent(market.funding)}
-                </div>
-                <span
-                  class="flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleWatchlist(market.symbol);
-                  }}
-                >
-                  <StarIcon active={market.watchlist} />
-                </span>
-              </button>
-            )}
+
+                  <div class="oi-cell">
+                    <span class="oi-value">{formatVolume(market.openInterest)}</span>
+                  </div>
+
+                  <div class={`funding-cell ${market.funding >= 0 ? "positive" : "negative"}`}>
+                    <span class="funding-value">{formatPercent(market.funding)}</span>
+                  </div>
+
+                  <div
+                    class="star-cell"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleWatchlist(market.symbol);
+                    }}
+                  >
+                    <StarIcon active={market.watchlist} />
+                  </div>
+                </button>
+              );
+            }}
           </For>
         </div>
 
         {/* Footer */}
-        <div class="flex justify-between items-center px-3 py-2 border-t border-brand-border text-brand-slate-500 text-[10px] bg-[#0d1014]">
-          <div class="flex flex-wrap gap-3">
-            <div class="flex items-center gap-1">
-              <span class="flex items-center gap-0.5">
-                <span class="bg-[#1e2328] border border-[#2a2f36] rounded px-1 py-0.5 text-[9px] text-slate-400">
-                  ↑
-                </span>
-                <span class="bg-[#1e2328] border border-[#2a2f36] rounded px-1 py-0.5 text-[9px] text-slate-400">
-                  ↓
-                </span>
-              </span>
+        <div class="search-footer">
+          <div class="shortcuts">
+            <div class="shortcut-group">
+              <kbd>↑</kbd>
+              <kbd>↓</kbd>
               <span>Navigate</span>
             </div>
-            <div class="flex items-center gap-1">
-              <span class="bg-[#1e2328] border border-[#2a2f36] rounded px-1 py-0.5 text-[9px] text-slate-400">
-                ↵
-              </span>
+            <div class="shortcut-group">
+              <kbd>↵</kbd>
               <span>Select</span>
             </div>
-            <div class="flex items-center gap-1">
-              <span class="bg-[#1e2328] border border-[#2a2f36] rounded px-1 py-0.5 text-[9px] text-slate-400">
-                ⌘F
-              </span>
+            <div class="shortcut-group">
+              <kbd>⌘</kbd>
+              <kbd>F</kbd>
               <span>Search</span>
             </div>
-            <div class="flex items-center gap-1">
-              <span class="bg-[#1e2328] border border-[#2a2f36] rounded px-1 py-0.5 text-[9px] text-slate-400">
-                ⌘S
-              </span>
+            <div class="shortcut-group">
+              <kbd>⌘</kbd>
+              <kbd>S</kbd>
               <span>Watchlist</span>
             </div>
-            <div class="flex items-center gap-1">
-              <span class="bg-[#1e2328] border border-[#2a2f36] rounded px-1 py-0.5 text-[9px] text-slate-400">
-                ⌘↑
-              </span>
-              <span>Top</span>
-            </div>
-            <div class="flex items-center gap-1">
-              <span class="bg-[#1e2328] border border-[#2a2f36] rounded px-1 py-0.5 text-[9px] text-slate-400">
-                ⌘↓
-              </span>
-              <span>Bottom</span>
-            </div>
           </div>
-          <div class="text-brand-slate-500">
-            {filteredMarkets().length} markets
+          <div class="market-count">
+            <span class="count-number">{filteredMarkets().length}</span>
+            <span class="count-label">markets</span>
           </div>
         </div>
       </div>

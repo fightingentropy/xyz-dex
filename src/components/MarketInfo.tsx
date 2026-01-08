@@ -1,4 +1,4 @@
-import { Component } from "solid-js";
+import { Component, Show } from "solid-js";
 import {
   currentMarket,
   currentMarketLeverage,
@@ -57,9 +57,16 @@ const MarketInfo: Component = () => {
         class="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-slate-800/50 transition-colors"
         onClick={() => setSearchOpen(true)}
       >
-        <div class="w-6 h-6 rounded-full bg-brand-screen flex items-center justify-center border border-brand-border text-[10px] font-semibold text-slate-200">
-          {currentSymbol().slice(0, 4)}
-        </div>
+        <Show
+          when={["BTC", "ETH", "HYPE", "SOL", "ZEC"].includes(currentSymbol())}
+          fallback={
+            <div class="w-6 h-6 rounded-full bg-brand-screen flex items-center justify-center border border-brand-border text-[10px] font-semibold text-slate-200">
+              {currentSymbol().slice(0, 4)}
+            </div>
+          }
+        >
+          <img src={`/${currentSymbol().toLowerCase()}.svg`} alt={currentSymbol()} class="w-6 h-6" />
+        </Show>
         <span class="font-semibold text-slate-100">{currentMarket()}</span>
         <span class="text-xs px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded">
           {leverageLabel()}

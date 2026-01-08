@@ -314,7 +314,7 @@ export const selectMarket = (market: Market) => {
   );
 
   // Update document title
-  document.title = `${markPrice()} | ${market.name} | Trade XYZ`;
+  document.title = `${markPrice()} | ${market.symbol} | Trade XYZ`;
 };
 
 // Live price polling using Hyperliquid API
@@ -356,7 +356,7 @@ export const useLivePrices = (options?: { enabled?: () => boolean }) => {
       if (markSource) {
         const formatted = formatPrice(markSource);
         setMarkPrice(formatted);
-        document.title = `${formatted} | ${currentMarket()} | Trade XYZ`;
+        document.title = `${formatted} | ${currentSymbol()} | Trade XYZ`;
       }
 
       // Oracle price

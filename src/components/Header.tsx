@@ -9,19 +9,12 @@ const Header: Component = () => {
   return (
     <header class="bg-brand-screen top-0 z-25 hidden items-center gap-2 px-3 py-2 sm:px-4 md:flex">
       <div class="flex items-center gap-6 pr-4 font-mono text-sm">
-        <button onClick={() => setCurrentPage("trade")}>
+        <button onClick={() => setCurrentPage("trade")} class="flex items-center">
           <img
             alt="XYZ"
-            width="90"
-            height="20"
-            class="object-contain hidden flex-shrink-0 font-mono select-none sm:flex"
-            src="/tradexyz.svg"
-          />
-          <img
-            alt="XYZ"
-            width="50"
-            height="50"
-            class="object-contain flex-shrink-0 font-mono select-none sm:hidden"
+            width="68"
+            height="32"
+            class="object-contain flex-shrink-0 select-none"
             src="/xyz.svg"
           />
         </button>
