@@ -96,14 +96,16 @@ const MarketInfo: Component = () => {
           <span class="text-slate-200 font-mono">{volume24h()}</span>
           <span class="text-xs text-brand-slate-500">24h Volume</span>
         </div>
-        <div class="flex flex-col">
-          <span class="text-slate-200 font-mono">{openInterest()}</span>
-          <span class="text-xs text-brand-slate-500">Open Interest</span>
-        </div>
-        <div class="flex flex-col">
-          <span class={`font-mono ${fundingColor()}`}>{fundingRate()}</span>
-          <span class="text-xs text-brand-slate-500">8h Funding</span>
-        </div>
+        <Show when={currentMarketType() !== "spot"}>
+          <div class="flex flex-col">
+            <span class="text-slate-200 font-mono">{openInterest()}</span>
+            <span class="text-xs text-brand-slate-500">Open Interest</span>
+          </div>
+          <div class="flex flex-col">
+            <span class={`font-mono ${fundingColor()}`}>{fundingRate()}</span>
+            <span class="text-xs text-brand-slate-500">8h Funding</span>
+          </div>
+        </Show>
       </div>
     </div>
   );

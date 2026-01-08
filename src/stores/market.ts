@@ -382,8 +382,9 @@ const fetchAndUpdateAll = async (
         tokenMap.set(token.index, token.name);
       });
 
-      spotData.meta.universe.forEach((pair, index) => {
-        const ctx = spotData.ctx[index];
+      spotData.meta.universe.forEach((pair) => {
+        // Use pair.index to look up the correct context (not iteration index)
+        const ctx = spotData.ctx[pair.index];
         if (!ctx) return;
 
         // Get base token name (first token in pair)

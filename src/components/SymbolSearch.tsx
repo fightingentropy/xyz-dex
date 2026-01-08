@@ -442,7 +442,7 @@ const SymbolSearch: Component = () => {
                             ? `[${market.name}]`
                             : market.name}
                         </span>
-                        <span class="leverage-badge">{market.leverage}</span>
+                        <span class="leverage-badge">{market.type === "spot" ? "Spot" : market.leverage}</span>
                         {market.type === "equities" && (
                           <span class="xyz-badge">XYZ</span>
                         )}
@@ -472,11 +472,15 @@ const SymbolSearch: Component = () => {
                   </div>
 
                   <div class="oi-cell">
-                    <span class="oi-value">{formatVolume(market.openInterest)}</span>
+                    <span class="oi-value">
+                      {market.type === "spot" ? "--" : formatVolume(market.openInterest)}
+                    </span>
                   </div>
 
-                  <div class={`funding-cell ${market.funding >= 0 ? "positive" : "negative"}`}>
-                    <span class="funding-value">{formatPercent(market.funding)}</span>
+                  <div class={`funding-cell ${market.type === "spot" ? "" : market.funding >= 0 ? "positive" : "negative"}`}>
+                    <span class="funding-value">
+                      {market.type === "spot" ? "--" : formatPercent(market.funding)}
+                    </span>
                   </div>
 
                   <div
