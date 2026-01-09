@@ -622,3 +622,57 @@ export const closePosition = mutation({
     });
   },
 });
+
+export const autoDeleveragePosition = mutation({
+  args: {
+    symbol: v.string(),
+    markPrice: v.number(),
+    reduceSize: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuthUser(ctx);
+    const position = await getPosition(ctx, user._id, args.symbol);
+    if (!position) return;
+    if (!Number.isFinite(args.markPrice) || args.markPrice <= 0) {
+      throw new Error("Invalid mark price.");
+    }
+    if (!Number.isFinite(args.reduceSize) || args.reduceSize <= 0) {
+      throw new Error("Invalid reduce size.");
+    }
+
+    const absSize = Math.abs(position.size);
+    if (absSize <= 0) return;
+    const size = Math.min(absSize, args.reduceSize);
+    if (size <= 0) return;
+
+    const side = position.size > 0 ? "sell" : "buy";
+    const now = Date.now();
+    const orderId = await ctx.db.insert("orders", {
+      userId: user._id,
+      symbol: position.symbol,
+      side,
+      type: "market",
+      size,
+      filledSize: size,
+      avgFillPrice: args.markPrice,
+      leverage: position.leverage,
+      collateral: position.collateral,
+      marginType: position.marginType ?? "isolated",
+      status: "filled",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await executeFill(ctx, {
+      userId: user._id,
+      orderId,
+      symbol: position.symbol,
+      side,
+      size,
+      price: args.markPrice,
+      leverage: position.leverage,
+      collateral: position.collateral,
+      marginType: position.marginType ?? "isolated",
+    });
+  },
+});

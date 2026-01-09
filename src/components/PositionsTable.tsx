@@ -111,7 +111,8 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                   return unhedgedValue / position.leverage;
                 };
 
-                const pnl = () => (mark() - position.entryPrice) * position.size;
+                const pnl = () =>
+                  (mark() - position.entryPrice) * position.size;
                 const roe = () => (margin() > 0 ? (pnl() / margin()) * 100 : 0);
                 const marginType = position.marginType ?? "cross";
                 const marginLabel =
@@ -137,16 +138,20 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                   if (marginType === "cross") {
                     // Cross margin: use account equity for unhedged portion
                     const equity = baseEquity();
-                    if (!Number.isFinite(equity) || unhedgedSize === 0) return NaN;
+                    if (!Number.isFinite(equity) || unhedgedSize === 0)
+                      return NaN;
                     // For shorts, liq price is entry + equity/size (price going up)
                     // For longs, liq price is entry - equity/size (price going down)
                     if (isShort) {
                       return position.entryPrice + equity / unhedgedSize;
                     }
-                    return position.entryPrice - equity / Math.abs(position.size);
+                    return (
+                      position.entryPrice - equity / Math.abs(position.size)
+                    );
                   } else {
                     // Isolated margin: use leverage factor for unhedged portion
-                    const liqFactor = position.leverage > 0 ? 1 / position.leverage : 0;
+                    const liqFactor =
+                      position.leverage > 0 ? 1 / position.leverage : 0;
                     if (isShort) {
                       // For shorts, liquidation happens when price goes up
                       return position.entryPrice * (1 + liqFactor);
@@ -162,49 +167,54 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                 const fundingDisplay = () => {
                   // Get funding rate for this symbol
                   const market = MARKETS().find(
-                    (m) => m.symbol === position.symbol && m.type === "perps"
+                    (m) => m.symbol === position.symbol && m.type === "perps",
                   );
-                  
+
                   // Calculate cumulative funding
                   // Funding is paid every 8 hours (3 times per day)
                   // For longs: positive funding rate means paying funding (negative), negative means receiving (positive)
                   // For shorts: opposite - positive funding rate means receiving funding (positive), negative means paying (negative)
                   let cumulativeFunding = position.cumulativeFunding ?? 0;
-                  
+
                   // If we have a stored cumulative funding value, use it
                   if (cumulativeFunding !== 0) {
-                    const fundingColor = cumulativeFunding >= 0 ? "text-brand-green-400" : "text-brand-red-400";
+                    const fundingColor =
+                      cumulativeFunding >= 0
+                        ? "text-brand-green-400"
+                        : "text-brand-red-400";
                     return (
                       <span class={`font-mono ${fundingColor}`}>
                         {formatSignedUsd(cumulativeFunding)}
                       </span>
                     );
                   }
-                  
+
                   // Otherwise, calculate an estimate based on current funding rate and time elapsed
                   if (market && market.funding !== undefined) {
                     const fundingRate = market.funding; // Already in decimal form (e.g., 0.0001 = 0.01%)
                     const positionNotional = Math.abs(position.size) * mark();
-                    const hoursSinceUpdate = (Date.now() - position.updatedAt) / (1000 * 60 * 60);
+                    const hoursSinceUpdate =
+                      (Date.now() - position.updatedAt) / (1000 * 60 * 60);
                     const fundingPeriods = hoursSinceUpdate / 8; // Funding paid every 8 hours
-                    
+
                     // For longs: if funding rate is positive, they pay (negative), if negative, they receive (positive)
                     // For shorts: opposite
                     const estimatedFunding = isLong
                       ? -positionNotional * fundingRate * fundingPeriods
                       : positionNotional * fundingRate * fundingPeriods;
-                    
-                    const fundingColor = estimatedFunding >= 0 ? "text-brand-green-400" : "text-brand-red-400";
+
+                    const fundingColor =
+                      estimatedFunding >= 0
+                        ? "text-brand-green-400"
+                        : "text-brand-red-400";
                     return (
                       <span class={`font-mono ${fundingColor}`}>
                         {formatSignedUsd(estimatedFunding)}
                       </span>
                     );
                   }
-                  
-                  return (
-                    <span class="font-mono text-brand-slate-400">--</span>
-                  );
+
+                  return <span class="font-mono text-brand-slate-400">--</span>;
                 };
 
                 return (
@@ -272,7 +282,9 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                         <Show
                           when={!isFullyHedged}
                           fallback={
-                            <span class="text-emerald-400 font-medium">None</span>
+                            <span class="text-emerald-400 font-medium">
+                              None
+                            </span>
                           }
                         >
                           {hasValidPrice() &&
@@ -292,7 +304,9 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
-                      {hasValidPrice() ? fundingDisplay() : (
+                      {hasValidPrice() ? (
+                        fundingDisplay()
+                      ) : (
                         <span class="font-mono text-brand-slate-400">--</span>
                       )}
                     </td>

@@ -31,56 +31,58 @@ export type PortfolioMarginStatus = {
   }>;
 } | null;
 
-const { openOrders, positions, perpsBalances, portfolioMarginStatus } = createRoot(() => {
-  const openOrdersQuery = createConvexQuery(
-    api.orders.listOpenOrders,
-    () => {
-      return isAuthenticated() ? {} : null;
-    },
-    [],
-  );
+const { openOrders, positions, perpsBalances, portfolioMarginStatus } =
+  createRoot(() => {
+    const openOrdersQuery = createConvexQuery(
+      api.orders.listOpenOrders,
+      () => {
+        return isAuthenticated() ? {} : null;
+      },
+      [],
+    );
 
-  const positionsQuery = createConvexQuery(
-    api.orders.listPositions,
-    () => {
-      return isAuthenticated() ? {} : null;
-    },
-    [],
-  );
+    const positionsQuery = createConvexQuery(
+      api.orders.listPositions,
+      () => {
+        return isAuthenticated() ? {} : null;
+      },
+      [],
+    );
 
-  const balancesQuery = createConvexQuery(
-    api.orders.listPerpsBalances,
-    () => {
-      return isAuthenticated() ? {} : null;
-    },
-    [],
-  );
+    const balancesQuery = createConvexQuery(
+      api.orders.listPerpsBalances,
+      () => {
+        return isAuthenticated() ? {} : null;
+      },
+      [],
+    );
 
-  const portfolioMarginQuery = createConvexQuery(
-    api.portfolioMargin.getPortfolioMarginStatus,
-    () => {
-      return isAuthenticated() ? {} : null;
-    },
-  );
+    const portfolioMarginQuery = createConvexQuery(
+      api.portfolioMargin.getPortfolioMarginStatus,
+      () => {
+        return isAuthenticated() ? {} : null;
+      },
+    );
 
-  const perpsBalances = createMemo<Record<Collateral, number>>(() => {
-    const next: Record<Collateral, number> = { USDC: 0, USDT: 0 };
-    const balances = balancesQuery() ?? [];
-    for (const balance of balances) {
-      if (balance.asset === "USDC" || balance.asset === "USDT") {
-        next[balance.asset] = balance.balance;
+    const perpsBalances = createMemo<Record<Collateral, number>>(() => {
+      const next: Record<Collateral, number> = { USDC: 0, USDT: 0 };
+      const balances = balancesQuery() ?? [];
+      for (const balance of balances) {
+        if (balance.asset === "USDC" || balance.asset === "USDT") {
+          next[balance.asset] = balance.balance;
+        }
       }
-    }
-    return next;
-  });
+      return next;
+    });
 
-  return {
-    openOrders: () => openOrdersQuery() ?? [],
-    positions: () => positionsQuery() ?? [],
-    perpsBalances,
-    portfolioMarginStatus: () => portfolioMarginQuery() as PortfolioMarginStatus,
-  };
-});
+    return {
+      openOrders: () => openOrdersQuery() ?? [],
+      positions: () => positionsQuery() ?? [],
+      perpsBalances,
+      portfolioMarginStatus: () =>
+        portfolioMarginQuery() as PortfolioMarginStatus,
+    };
+  });
 const [orderBooks, setOrderBooks] = createStore<Record<string, OrderBook>>({});
 
 const parseNumber = (value: string | number): number => {
@@ -118,6 +120,12 @@ const LIQUIDITY_FRACTION = 0.01;
 const MIN_LIQUIDITY_NOTIONAL = 150_000;
 const MAX_LIQUIDITY_NOTIONAL = 10_000_000;
 const BOOK_REFRESH_THRESHOLD = 0.0025;
+const ADL_COOLDOWN_MS = 4000;
+const ADL_REDUCTION_FRACTION = 0.25;
+const ADL_MIN_REDUCTION = 0.0001;
+
+const adlCooldownBySymbol = new Map<string, number>();
+const adlInFlight = new Set<string>();
 
 const levelMultiplier = (seed: number, index: number) => {
   const wave = Math.sin(seed + index) * 10000;
@@ -255,6 +263,85 @@ export const getMarkPriceForSymbol = (symbol: string) => {
   return parseNumber(fallback ?? 0);
 };
 
+const getUnhedgedSize = (position: Position) => {
+  const spotCollateral = position.spotCollateralSize ?? 0;
+  const isShort = position.size < 0;
+  const hedgedSize = isShort ? spotCollateral : 0;
+  return Math.max(0, Math.abs(position.size) - hedgedSize);
+};
+
+const shouldTriggerAdl = (
+  position: Position,
+  mark: number,
+  totalUnrealizedByCollateral: Record<Collateral, number>,
+) => {
+  if (!Number.isFinite(mark) || mark <= 0) return false;
+  if (!Number.isFinite(position.entryPrice) || position.entryPrice <= 0) {
+    return false;
+  }
+  if (!Number.isFinite(position.leverage) || position.leverage <= 0)
+    return false;
+
+  const isShort = position.size < 0;
+  const unhedgedSize = getUnhedgedSize(position);
+  if (unhedgedSize <= 0) return false;
+
+  const marginType = position.marginType ?? "cross";
+  if (marginType === "isolated") {
+    const liqFactor = 1 / position.leverage;
+    const liqPrice = isShort
+      ? position.entryPrice * (1 + liqFactor)
+      : position.entryPrice * (1 - liqFactor);
+    if (!Number.isFinite(liqPrice) || liqPrice <= 0) return false;
+    return isShort ? mark >= liqPrice : mark <= liqPrice;
+  }
+
+  const currentUnrealized = (mark - position.entryPrice) * position.size;
+  const balance = perpsBalances()[position.collateral] ?? 0;
+  const equity =
+    balance +
+    (totalUnrealizedByCollateral[position.collateral] - currentUnrealized);
+  if (!Number.isFinite(equity)) return false;
+  if (equity <= 0) return true;
+
+  const liqPrice = isShort
+    ? position.entryPrice + equity / unhedgedSize
+    : position.entryPrice - equity / Math.abs(position.size);
+  if (!Number.isFinite(liqPrice) || liqPrice <= 0) return false;
+  return isShort ? mark >= liqPrice : mark <= liqPrice;
+};
+
+const triggerAdlReduction = async (position: Position, mark: number) => {
+  if (!isAuthenticated()) return;
+  const symbol = position.symbol;
+  if (adlInFlight.has(symbol)) return;
+  const now = Date.now();
+  const last = adlCooldownBySymbol.get(symbol) ?? 0;
+  if (now - last < ADL_COOLDOWN_MS) return;
+
+  const absSize = Math.abs(position.size);
+  if (!Number.isFinite(absSize) || absSize <= 0) return;
+  const reduceSize = Math.min(
+    absSize,
+    Math.max(absSize * ADL_REDUCTION_FRACTION, ADL_MIN_REDUCTION),
+  );
+  if (!Number.isFinite(reduceSize) || reduceSize <= 0) return;
+
+  adlInFlight.add(symbol);
+  adlCooldownBySymbol.set(symbol, now);
+  try {
+    await convex.mutation(api.orders.autoDeleveragePosition, {
+      symbol,
+      markPrice: mark,
+      reduceSize,
+    });
+  } catch (error) {
+    console.error("ADL reduction failed:", error);
+  } finally {
+    adlInFlight.delete(symbol);
+  }
+};
+
 createRoot(() => {
   // Sync prices for the current symbol from live markPrice
   createEffect(() => {
@@ -302,6 +389,27 @@ createRoot(() => {
     if (drift < BOOK_REFRESH_THRESHOLD) return;
     const refreshed = seedOrderBook(symbol, mark);
     setOrderBooks(symbol, applyOpenOrdersToBook(refreshed, symbol));
+  });
+
+  createEffect(() => {
+    if (!isAuthenticated()) return;
+    const activePositions = positions();
+    if (activePositions.length === 0) return;
+
+    const totalUnrealized: Record<Collateral, number> = { USDC: 0, USDT: 0 };
+    for (const position of activePositions) {
+      const mark = getMarkPriceForSymbol(position.symbol);
+      if (!Number.isFinite(mark) || mark <= 0) continue;
+      totalUnrealized[position.collateral] +=
+        (mark - position.entryPrice) * position.size;
+    }
+
+    for (const position of activePositions) {
+      const mark = getMarkPriceForSymbol(position.symbol);
+      if (!Number.isFinite(mark) || mark <= 0) continue;
+      if (!shouldTriggerAdl(position, mark, totalUnrealized)) continue;
+      void triggerAdlReduction(position, mark);
+    }
   });
 });
 
@@ -356,7 +464,9 @@ export const togglePortfolioMargin = async (
     return { ok: true };
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Failed to update portfolio margin.";
+      error instanceof Error
+        ? error.message
+        : "Failed to update portfolio margin.";
     console.error("Failed to toggle portfolio margin:", error);
     return { ok: false, error: message };
   }

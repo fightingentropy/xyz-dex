@@ -11,6 +11,14 @@ Binance Futures APIs and websockets.
 - Symbol search modal with keyboard shortcuts
 - Candlestick chart with volume and moving averages
 - Local caching for chart data and UI settings
+- Portfolio margin mode for spot-collateralized short perps
+
+## Portfolio margin
+Trade XYZ includes a portfolio margin mode for perps. When enabled, spot
+holdings of the same asset can collateralize short perp positions, reducing the
+USDC/USDT margin requirement and liquidation risk for the hedged portion. Use
+the Margin Mode button in the order form to switch between Classic and
+Portfolio. Full definitions and formulas live in `SPEC_DEFS.md`.
 
 ## Data sources and caching
 - REST data:
