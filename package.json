@@ -4,8 +4,8 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n convex,app -c yellow,cyan \"bunx convex dev\" \"vite\"",
-    "dev:convex": "bunx convex dev",
+    "dev": "concurrently -k -n convex,app -c yellow,cyan \"CONVEX_NO_UPDATE_CHECK=true bunx convex dev\" \"vite\"",
+    "dev:convex": "CONVEX_NO_UPDATE_CHECK=true bunx convex dev",
     "dev:ui": "vite",
     "build": "vite build",
     "preview": "vite preview"
