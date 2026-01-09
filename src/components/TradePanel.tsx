@@ -2,6 +2,7 @@ import { Component, Show, createSignal, onCleanup } from "solid-js";
 import BalancesPanel from "./BalancesPanel";
 import OpenOrdersTable from "./OpenOrdersTable";
 import PositionsTable from "./PositionsTable";
+import TradeHistoryTable from "./TradeHistoryTable";
 
 type TradeTab =
   | "balances"
@@ -164,11 +165,10 @@ const TradePanel: Component = () => {
         <Show when={activeTab() === "openOrders"}>
           <OpenOrdersTable compact />
         </Show>
-        <Show
-          when={
-            activeTab() === "orderHistory" || activeTab() === "tradeHistory"
-          }
-        >
+        <Show when={activeTab() === "tradeHistory"}>
+          <TradeHistoryTable compact />
+        </Show>
+        <Show when={activeTab() === "orderHistory"}>
           <div class="flex items-center justify-center h-full text-brand-slate-500 text-sm">
             <div class="text-center">
               <p class="text-slate-300 mb-1">No history yet</p>

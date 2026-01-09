@@ -17,11 +17,13 @@ export type PortfolioMetrics =
   | null
   | undefined;
 
+const TRADE_HISTORY_LIMIT = 500;
+
 const { tradeHistory, portfolioMetrics } = createRoot(() => {
   const tradesQuery = createConvexQuery(
     api.trades.listTrades,
     () => {
-      return isAuthenticated() ? { limit: 50 } : null;
+      return isAuthenticated() ? { limit: TRADE_HISTORY_LIMIT } : null;
     },
     [],
   );

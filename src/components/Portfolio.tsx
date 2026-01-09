@@ -1,9 +1,9 @@
-import { Component, For, Show, createSignal } from "solid-js";
+import { Component, For, Show, createMemo, createSignal } from "solid-js";
 import BalancesPanel from "./BalancesPanel";
 import OpenOrdersTable from "./OpenOrdersTable";
 import PositionsTable from "./PositionsTable";
 import TradeHistoryTable from "./TradeHistoryTable";
-import { portfolioMetrics } from "../stores/portfolio";
+import { portfolioMetrics, tradeHistory } from "../stores/portfolio";
 import {
   isPortfolioMarginEnabled,
   togglePortfolioMargin,
@@ -30,10 +30,67 @@ const tabs: { id: TabId; label: string }[] = [
   { id: "accountActivity", label: "Account Activity" },
 ];
 
+const PERIOD_OPTIONS = [
+  { id: "24h", label: "24H", rangeMs: 24 * 60 * 60 * 1000 },
+  { id: "7d", label: "7D", rangeMs: 7 * 24 * 60 * 60 * 1000 },
+  { id: "30d", label: "30D", rangeMs: 30 * 24 * 60 * 60 * 1000 },
+  { id: "all", label: "All Time" },
+] as const;
+
+type PeriodOption = (typeof PERIOD_OPTIONS)[number];
+type PeriodId = PeriodOption["id"];
+
+const DEFAULT_PERIOD = PERIOD_OPTIONS[1];
+const DEFAULT_RANGE_MS = 30 * 24 * 60 * 60 * 1000;
+const CHART_LINE_COLOR = "#f8fafc";
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
+const buildTicks = (min: number, max: number, count: number) => {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || count <= 1) return [];
+  const step = (max - min) / (count - 1);
+  return Array.from({ length: count }, (_, index) => max - step * index);
+};
+
+const formatAxisValue = (value: number) => {
+  if (!Number.isFinite(value)) return "--";
+  const abs = Math.abs(value);
+  const decimals = abs >= 100 ? 0 : abs >= 1 ? 2 : 4;
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+};
+
+const formatAxisDate = (timestamp: number, periodId: PeriodId) => {
+  if (!Number.isFinite(timestamp)) return "--";
+  const date = new Date(timestamp);
+  if (periodId === "24h") {
+    return date.toLocaleTimeString("en-US", {
+      hour12: false,
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+  if (periodId === "all") {
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      year: "2-digit",
+    });
+  }
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "2-digit",
+  });
+};
+
 const Portfolio: Component = () => {
   const [activeTab, setActiveTab] = createSignal<TabId>("positions");
   const [accountsFilter] = createSignal("All");
-  const [periodFilter] = createSignal("7 Days");
+  const [periodFilter, setPeriodFilter] =
+    createSignal<PeriodOption>(DEFAULT_PERIOD);
+  const [periodMenuOpen, setPeriodMenuOpen] = createSignal(false);
   const [chartType] = createSignal("PnL");
   const [isTogglingMargin, setIsTogglingMargin] = createSignal(false);
   const metrics = () => portfolioMetrics();
@@ -51,18 +108,107 @@ const Portfolio: Component = () => {
 
   const formatUsd = (value?: number) => {
     if (!Number.isFinite(value ?? NaN)) return "--";
-    return `$${Number(value).toLocaleString("en-US", {
+    const numeric = Number(value);
+    const formatted = Math.abs(numeric).toLocaleString("en-US", {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    })}`;
+    });
+    return `${numeric < 0 ? "-" : ""}$${formatted}`;
   };
+
+  const pnlChart = createMemo(() => {
+    const selected = periodFilter();
+    const rangeEnd = Date.now();
+    const rangeStart = selected.rangeMs
+      ? rangeEnd - selected.rangeMs
+      : undefined;
+    const filtered = tradeHistory()
+      .filter((trade) => !rangeStart || trade.createdAt >= rangeStart)
+      .slice()
+      .sort((a, b) => a.createdAt - b.createdAt);
+
+    let running = 0;
+    const defaultSpan = selected.rangeMs ?? DEFAULT_RANGE_MS;
+    const startTime =
+      rangeStart ?? filtered[0]?.createdAt ?? rangeEnd - defaultSpan;
+    const points = [{ time: startTime, value: 0 }];
+
+    for (const trade of filtered) {
+      running += trade.pnl;
+      points.push({ time: trade.createdAt, value: running });
+    }
+    points.push({ time: rangeEnd, value: running });
+
+    let min = Math.min(...points.map((point) => point.value));
+    let max = Math.max(...points.map((point) => point.value));
+    if (min === max) {
+      const pad = Math.max(1, Math.abs(min) * 0.1);
+      min -= pad;
+      max += pad;
+    } else {
+      const pad = (max - min) * 0.1;
+      min -= pad;
+      max += pad;
+    }
+
+    return {
+      points,
+      min,
+      max,
+      rangeStart: startTime,
+      rangeEnd,
+      lastValue: running,
+      hasTrades: filtered.length > 0,
+    };
+  });
+
+  const plotPoints = createMemo(() => {
+    const chart = pnlChart();
+    const timeRange = Math.max(1, chart.rangeEnd - chart.rangeStart);
+    const valueRange = Math.max(1e-6, chart.max - chart.min);
+    return chart.points.map((point) => ({
+      ...point,
+      x: clamp(((point.time - chart.rangeStart) / timeRange) * 100, 0, 100),
+      y: clamp(100 - ((point.value - chart.min) / valueRange) * 100, 0, 100),
+    }));
+  });
+
+  const linePath = createMemo(() => {
+    const points = plotPoints();
+    if (!points.length) return "";
+    let path = `M${points[0].x} ${points[0].y}`;
+    for (let i = 1; i < points.length; i += 1) {
+      const prev = points[i - 1];
+      const next = points[i];
+      path += ` L${next.x} ${prev.y} L${next.x} ${next.y}`;
+    }
+    return path;
+  });
+
+  const yTicks = createMemo(() => {
+    const chart = pnlChart();
+    if (!chart.hasTrades) return [0, 0, 0, 0];
+    return buildTicks(chart.min, chart.max, 4);
+  });
+
+  const xTicks = createMemo(() => {
+    const chart = pnlChart();
+    const start = chart.rangeStart;
+    const end = chart.rangeEnd;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      return [start];
+    }
+    const count = 5;
+    const step = (end - start) / (count - 1);
+    return Array.from({ length: count }, (_, index) => start + step * index);
+  });
 
   return (
     <div class="flex flex-col h-full bg-brand-screen text-slate-200 overflow-hidden">
       {/* Page Title & Portfolio Margin Toggle */}
       <div class="px-4 py-4 flex items-center justify-between">
         <h1 class="text-xl font-semibold text-slate-100">Portfolio</h1>
-        
+
         {/* Portfolio Margin Toggle */}
         <div class="flex items-center gap-3">
           <div class="flex items-center gap-2">
@@ -81,8 +227,9 @@ const Portfolio: Component = () => {
               </svg>
               <div class="absolute bottom-full right-0 mb-2 w-64 p-3 bg-brand-surface border border-brand-border rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
                 <p class="text-xs text-brand-slate-300 leading-relaxed">
-                  Enable to use spot holdings as collateral for short perp positions. 
-                  Hedged positions (short perp + spot) have reduced or no liquidation risk.
+                  Enable to use spot holdings as collateral for short perp
+                  positions. Hedged positions (short perp + spot) have reduced
+                  or no liquidation risk.
                 </p>
               </div>
             </div>
@@ -177,18 +324,50 @@ const Portfolio: Component = () => {
                 {/* Period Dropdown */}
                 <div class="flex items-center gap-2">
                   <span class="text-sm text-brand-slate-400">Period</span>
-                  <button class="flex items-center gap-1.5 text-sm text-slate-100 hover:text-white">
-                    {periodFilter()}
-                    <svg
-                      class="w-4 h-4"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
+                  <div class="relative">
+                    <button
+                      class="flex items-center gap-1.5 text-sm text-slate-100 hover:text-white"
+                      onClick={() => setPeriodMenuOpen(!periodMenuOpen())}
                     >
-                      <path d="m6 9 6 6 6-6" />
-                    </svg>
-                  </button>
+                      {periodFilter().label}
+                      <svg
+                        class="w-4 h-4"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path d="m6 9 6 6 6-6" />
+                      </svg>
+                    </button>
+                    <Show when={periodMenuOpen()}>
+                      <>
+                        <div
+                          class="fixed inset-0 z-30"
+                          onClick={() => setPeriodMenuOpen(false)}
+                        />
+                        <div class="absolute left-0 top-full z-40 mt-2 w-32 rounded-lg border border-brand-border bg-brand-surface shadow-xl">
+                          <For each={PERIOD_OPTIONS}>
+                            {(option) => (
+                              <button
+                                class={`w-full px-3 py-2 text-left text-xs font-medium transition-colors ${
+                                  option.id === periodFilter().id
+                                    ? "text-brand-accent bg-brand-accent/10"
+                                    : "text-brand-slate-300 hover:text-slate-100 hover:bg-brand-border/60"
+                                }`}
+                                onClick={() => {
+                                  setPeriodFilter(option);
+                                  setPeriodMenuOpen(false);
+                                }}
+                              >
+                                {option.label}
+                              </button>
+                            )}
+                          </For>
+                        </div>
+                      </>
+                    </Show>
+                  </div>
                 </div>
 
                 {/* Chart Type Dropdown */}
@@ -246,40 +425,52 @@ const Portfolio: Component = () => {
                 <div class="xl:col-span-8">
                   <div class="h-48 relative">
                     {/* Y-Axis Labels */}
-                    <div class="absolute left-0 top-0 bottom-6 w-8 flex flex-col justify-between text-xs text-brand-slate-500 text-right pr-2">
-                      <span>3</span>
-                      <span>2</span>
-                      <span>1</span>
-                      <span>0</span>
+                    <div class="absolute left-0 top-0 bottom-6 w-16 flex flex-col justify-between text-[11px] text-brand-slate-400 text-right pr-2">
+                      <For each={yTicks()}>
+                        {(tick) => <span>{formatAxisValue(tick)}</span>}
+                      </For>
                     </div>
 
                     {/* Chart Area */}
-                    <div class="ml-10 h-full border-l border-b border-brand-border relative">
+                    <div class="ml-16 h-full border-l border-b border-brand-border relative overflow-hidden">
                       {/* Grid Lines */}
                       <div class="absolute inset-0 flex flex-col justify-between">
-                        <div class="border-b border-brand-border/30 h-0" />
-                        <div class="border-b border-brand-border/30 h-0" />
-                        <div class="border-b border-brand-border/30 h-0" />
+                        <For each={yTicks()}>
+                          {() => (
+                            <div class="border-b border-brand-border/30 h-0" />
+                          )}
+                        </For>
                       </div>
 
-                      {/* Empty chart line (flat at 0) */}
-                      <div class="absolute bottom-0 left-0 right-0 h-px bg-brand-slate-500/50" />
+                      <svg
+                        class="absolute inset-0 h-full w-full"
+                        viewBox="0 0 100 100"
+                        preserveAspectRatio="none"
+                      >
+                        <Show when={linePath() !== ""}>
+                          <path
+                            d={linePath()}
+                            fill="none"
+                            stroke={CHART_LINE_COLOR}
+                            stroke-width="1.1"
+                          />
+                        </Show>
+                      </svg>
 
-                      {/* Price label */}
-                      <div class="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-brand-slate-500">
-                        $0.00
-                      </div>
+                      <Show when={!pnlChart().hasTrades}>
+                        <div class="absolute inset-0 flex items-center justify-center text-xs text-brand-slate-500">
+                          No PnL data for this period
+                        </div>
+                      </Show>
                     </div>
 
                     {/* X-Axis Labels */}
-                    <div class="ml-10 flex justify-between text-xs text-brand-slate-500 mt-1">
-                      <span>Sun. 04 Jan</span>
-                      <span>Mon. 05 Jan</span>
-                      <span>Mon. 05 Jan</span>
-                      <span>Mon. 05 Jan</span>
-                      <span>Mon. 05 Jan</span>
-                      <span>Mon. 05 Jan</span>
-                      <span>Mon. 05 Jan</span>
+                    <div class="ml-16 flex justify-between text-xs text-brand-slate-500 mt-1">
+                      <For each={xTicks()}>
+                        {(tick) => (
+                          <span>{formatAxisDate(tick, periodFilter().id)}</span>
+                        )}
+                      </For>
                     </div>
                   </div>
                 </div>
