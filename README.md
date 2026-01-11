@@ -41,10 +41,34 @@ Portfolio. Full definitions and formulas live in `SPEC_DEFS.md`.
 - `src/lib/binance.ts`: Binance API helpers and formatting utilities
 
 ## Development
-Install dependencies and start the dev server:
+Install dependencies:
 
 ```sh
 npm install
+```
+
+Create `.env.local` (Convex + app):
+
+```
+# Written automatically when you run `npx convex dev`
+CONVEX_DEPLOYMENT=local:local-your-deployment
+
+VITE_CONVEX_URL=http://127.0.0.1:3210
+
+# Custom auth (Convex)
+CUSTOM_AUTH_ISSUER=http://127.0.0.1:3210
+# Local Convex HTTP routes are under /http
+CUSTOM_AUTH_JWKS_URL=http://127.0.0.1:3210/http/.well-known/jwks.json
+CUSTOM_AUTH_AUDIENCE=trade-xyz
+CUSTOM_AUTH_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nREPLACE_ME\n-----END PRIVATE KEY-----
+CUSTOM_AUTH_PUBLIC_JWK={"kty":"RSA","kid":"trade-xyz-dev","use":"sig","alg":"RS256","n":"REPLACE_ME","e":"AQAB"}
+# Optional: override the kid used in JWT headers
+# CUSTOM_AUTH_KEY_ID=trade-xyz-dev
+```
+
+Start the dev servers (Convex + Vite):
+
+```sh
 npm run dev
 ```
 
@@ -63,18 +87,8 @@ npm run preview
 ```
 
 ## Auth (custom JWT)
-This project uses a custom email/password flow backed by Convex (no Auth0). Set
-these in `.env.local`:
-
-```
-CUSTOM_AUTH_ISSUER=http://127.0.0.1:3210
-CUSTOM_AUTH_JWKS_URL=http://127.0.0.1:3210/.well-known/jwks.json
-CUSTOM_AUTH_AUDIENCE=trade-xyz
-CUSTOM_AUTH_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nREPLACE_ME\n-----END PRIVATE KEY-----
-CUSTOM_AUTH_PUBLIC_JWK={"kty":"RSA","kid":"trade-xyz-dev","use":"sig","alg":"RS256","n":"REPLACE_ME","e":"AQAB"}
-# Optional: override the kid used in JWT headers
-# CUSTOM_AUTH_KEY_ID=trade-xyz-dev
-```
+This project uses a custom email/password flow backed by Convex (no Auth0).
+Generate an RSA key pair and derive a public JWK for the JWKS endpoint.
 
 Generate a local RSA key:
 
@@ -95,6 +109,53 @@ node -e "const { createPublicKey } = require('crypto'); const fs = require('fs')
 ```
 
 If you change `kid`, also set `CUSTOM_AUTH_KEY_ID` to match.
+
+## Production (Convex + Cloudflare Pages)
+### Convex (backend)
+Set these environment variables in the Convex production deployment:
+
+```
+CUSTOM_AUTH_ISSUER=https://earnest-ram-681.convex.site
+CUSTOM_AUTH_JWKS_URL=https://earnest-ram-681.convex.site/.well-known/jwks.json
+CUSTOM_AUTH_AUDIENCE=trade-xyz
+CUSTOM_AUTH_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nREPLACE_ME\n-----END PRIVATE KEY-----
+CUSTOM_AUTH_PUBLIC_JWK={"kty":"RSA","kid":"trade-xyz-prod","use":"sig","alg":"RS256","n":"REPLACE_ME","e":"AQAB"}
+# Optional: override the kid used in JWT headers
+# CUSTOM_AUTH_KEY_ID=trade-xyz-prod
+```
+
+Deploy the Convex functions:
+
+```sh
+CONVEX_DEPLOYMENT=prod:earnest-ram-681 npx convex deploy --yes
+```
+
+If your project is already configured, this also works:
+
+```sh
+npx convex deploy --prod
+```
+
+Redeploy after changing Convex environment variables or schema.
+
+### Cloudflare Pages (frontend)
+Set build output to `dist`, build command to `npm run build`, and set:
+
+```
+VITE_CONVEX_URL=https://earnest-ram-681.convex.cloud
+```
+
+Rebuild after changing `VITE_CONVEX_URL`.
+
+### Optional local production build
+If you want a local prod build, you can create `.env.production` with just:
+
+```
+VITE_CONVEX_URL=https://earnest-ram-681.convex.cloud
+```
+
+Keep private keys and Convex secrets in the Convex dashboard, not in frontend
+env files.
 
 ## Notes
 - Routes are handled manually via `window.history`:
