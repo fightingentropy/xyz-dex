@@ -60,93 +60,15 @@ const MarketInfo: Component = () => {
 
   const formatFundingCountdown = () => {
     const now = new Date();
-    
-    // Get current time in UK (Europe/London timezone)
-    const formatter = new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Europe/London",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    });
-    
-    const parts = formatter.formatToParts(now);
-    const getPart = (type: string) => {
-      const part = parts.find(p => p.type === type);
-      return part ? parseInt(part.value, 10) : 0;
-    };
-    
-    const ukYear = getPart("year");
-    const ukMonth = getPart("month") - 1; // JavaScript months are 0-indexed
-    const ukDay = getPart("day");
-    const ukHour = getPart("hour");
-    const ukMinute = getPart("minute");
-    const ukSecond = getPart("second");
-    
-    // Funding payment times: 7pm (19:00), 3am (03:00), 11am (11:00) UK time
-    const fundingHours = [19, 3, 11]; // 7pm, 3am, 11am
-    
-    // Find the next funding hour
-    let nextHour = fundingHours.find(h => h > ukHour);
-    let daysToAdd = 0;
-    
-    if (nextHour === undefined) {
-      // Current hour is after 7pm, next payment is 3am tomorrow
-      nextHour = fundingHours[0]; // 3am
-      daysToAdd = 1;
-    }
-
-    // Find the local time that corresponds to the next funding payment time in UK
-    // We'll start with an estimate and refine it
-    const currentUKTimeMs = (ukHour * 60 + ukMinute) * 60 * 1000 + ukSecond * 1000;
-    const nextUKTimeMs = nextHour * 60 * 60 * 1000;
-    let msUntilNextUK = nextUKTimeMs - currentUKTimeMs;
-    
-    if (msUntilNextUK <= 0) {
-      // Next payment is tomorrow
-      msUntilNextUK += 24 * 60 * 60 * 1000;
-    }
-    
-    // Start with an estimate
-    let candidate = new Date(now.getTime() + msUntilNextUK);
-    
-    // Refine the candidate by checking what UK time it represents
-    // and adjusting until we find the exact time
-    for (let i = 0; i < 48; i++) {
-      const candidateUK = candidate.toLocaleString("en-GB", {
-        timeZone: "Europe/London",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      });
-      const candidateParts = candidateUK.split(":");
-      const candidateHour = parseInt(candidateParts[0], 10);
-      const candidateMinute = parseInt(candidateParts[1], 10);
-      
-      // Check if we've found the right time (within 1 minute)
-      if (candidateHour === nextHour && candidateMinute === 0) {
-        break;
-      }
-      
-      // Adjust the candidate time
-      if (candidateHour < nextHour || (candidateHour === 23 && nextHour === 0)) {
-        // Need to move forward
-        candidate = new Date(candidate.getTime() + 60 * 1000);
-      } else {
-        // Need to move backward
-        candidate = new Date(candidate.getTime() - 60 * 1000);
-      }
-    }
-    
-    const remaining = Math.max(0, candidate.getTime() - now.getTime());
+    const next = new Date(now);
+    next.setMinutes(0, 0, 0);
+    next.setHours(next.getHours() + 1);
+    const remaining = Math.max(0, next.getTime() - now.getTime());
     const totalSeconds = Math.floor(remaining / 1000);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
-    
+
     return [
       String(hours).padStart(2, "0"),
       String(minutes).padStart(2, "0"),
