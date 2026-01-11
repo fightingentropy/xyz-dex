@@ -1,4 +1,11 @@
-import { createEffect, createMemo, createRoot, batch, untrack } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createRoot,
+  batch,
+  untrack,
+  onCleanup,
+} from "solid-js";
 import { createStore } from "solid-js/store";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
@@ -411,6 +418,80 @@ createRoot(() => {
       if (!shouldTriggerAdl(position, mark, totalUnrealized)) continue;
       void triggerAdlReduction(position, mark);
     }
+  });
+
+  // Update funding for positions periodically (every hour)
+  let fundingUpdateTimer: number | undefined;
+  const updateFunding = async () => {
+    if (!isAuthenticated()) return;
+    const activePositions = positions();
+    if (activePositions.length === 0) return;
+
+    const markets = untrack(() => MARKETS());
+    const fundingRates: Record<string, number> = {};
+    const markPrices: Record<string, number> = {};
+
+    for (const position of activePositions) {
+      const market = markets.find(
+        (m) => m.symbol === position.symbol && m.type === "perps",
+      );
+      if (!market) continue;
+
+      const mark = getMarkPriceForSymbol(position.symbol);
+      if (!Number.isFinite(mark) || mark <= 0) continue;
+
+      // Convert funding from percentage to decimal (e.g., 0.01% -> 0.0001)
+      const fundingRateDecimal = market.funding / 100;
+      fundingRates[position.symbol] = fundingRateDecimal;
+      markPrices[position.symbol] = mark;
+    }
+
+    if (Object.keys(fundingRates).length > 0) {
+      try {
+        await convex.mutation(api.orders.updateFundingForPositions, {
+          fundingRates,
+          markPrices,
+        });
+      } catch (error) {
+        console.error("Failed to update funding:", error);
+      }
+    }
+  };
+
+  // Update funding immediately when positions change, then every hour
+  createEffect(() => {
+    if (!isAuthenticated()) {
+      if (fundingUpdateTimer) {
+        clearInterval(fundingUpdateTimer);
+        fundingUpdateTimer = undefined;
+      }
+      return;
+    }
+
+    const activePositions = positions();
+    if (activePositions.length === 0) {
+      if (fundingUpdateTimer) {
+        clearInterval(fundingUpdateTimer);
+        fundingUpdateTimer = undefined;
+      }
+      return;
+    }
+
+    // Update immediately
+    void updateFunding();
+
+    // Then update every hour (3600000 ms)
+    if (fundingUpdateTimer) {
+      clearInterval(fundingUpdateTimer);
+    }
+    fundingUpdateTimer = setInterval(updateFunding, 3600000) as unknown as number;
+
+    onCleanup(() => {
+      if (fundingUpdateTimer) {
+        clearInterval(fundingUpdateTimer);
+        fundingUpdateTimer = undefined;
+      }
+    });
   });
 });
 

@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { action, mutation, query } from "./_generated/server";
+import type { ActionCtx, MutationCtx, QueryCtx } from "./_generated/server";
 import { getAuthUser, requireAuthUser } from "./lib/auth";
 import {
   calculateSpotCollateralForPosition,
@@ -29,6 +29,34 @@ const getPosition = async (
       q.eq("userId", userId).eq("symbol", symbol),
     )
     .unique();
+
+/**
+ * Calculate funding for a position for each hour since lastFundingUpdate.
+ * Funding is calculated as: positionNotional * fundingRate per hour
+ * For longs: positive funding rate means paying (negative), negative means receiving (positive)
+ * For shorts: opposite
+ */
+const calculateFundingForHours = (
+  position: Doc<"positions">,
+  fundingRate: number, // Funding rate in decimal form (e.g., 0.0001 = 0.01%)
+  markPrice: number,
+  hoursElapsed: number,
+): number => {
+  if (hoursElapsed <= 0 || position.size === 0) return 0;
+  
+  const positionNotional = Math.abs(position.size) * markPrice;
+  const isLong = position.size > 0;
+  
+  // Calculate funding for each hour
+  // For longs: if funding rate is positive, they pay (negative), if negative, they receive (positive)
+  // For shorts: opposite - positive funding rate means receiving (positive), negative means paying (negative)
+  const fundingPerHour = isLong
+    ? -positionNotional * fundingRate
+    : positionNotional * fundingRate;
+  
+  // Sum funding for all hours
+  return fundingPerHour * hoursElapsed;
+};
 
 const getPerpsBalance = async (
   ctx: MutationCtx | QueryCtx,
@@ -195,6 +223,7 @@ const applyFillToPosition = async (
       spotCollateralSize,
       realizedPnl: 0,
       cumulativeFunding: 0,
+      lastFundingUpdate: now,
       updatedAt: now,
     });
     return 0;
@@ -380,6 +409,92 @@ export const listPositions = query({
       .withIndex("by_user", (q) => q.eq("userId", user._id))
       .collect();
     return positions.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  },
+});
+
+/**
+ * Update funding for positions based on funding rates.
+ * This should be called periodically (e.g., every hour) to accumulate funding.
+ * Funding rates should be in decimal form (e.g., 0.0001 = 0.01%)
+ */
+export const updateFundingForPositions = mutation({
+  args: {
+    fundingRates: v.optional(
+      v.record(v.string(), v.number()),
+    ), // Map of symbol -> funding rate (decimal)
+    markPrices: v.optional(v.record(v.string(), v.number())), // Map of symbol -> mark price
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuthUser(ctx);
+    const positions = await ctx.db
+      .query("positions")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .collect();
+
+    const now = Date.now();
+    const fundingRates = args.fundingRates ?? {};
+    const markPrices = args.markPrices ?? {};
+    let updatedCount = 0;
+
+    for (const position of positions) {
+      const fundingRate = fundingRates[position.symbol];
+      const markPrice = markPrices[position.symbol];
+
+      // Skip if we don't have funding rate or mark price
+      if (
+        fundingRate === undefined ||
+        !Number.isFinite(fundingRate) ||
+        markPrice === undefined ||
+        !Number.isFinite(markPrice) ||
+        markPrice <= 0
+      ) {
+        continue;
+      }
+
+      // Calculate hours elapsed since last funding update (or position creation)
+      const lastUpdate = position.lastFundingUpdate ?? position.updatedAt;
+      const totalHoursElapsed = (now - lastUpdate) / (1000 * 60 * 60);
+
+      // Calculate funding for each full hour (round down)
+      const fullHoursElapsed = Math.floor(totalHoursElapsed);
+
+      // Only update if at least 1 full hour has passed
+      if (fullHoursElapsed < 1) {
+        continue;
+      }
+
+      // Calculate funding for each hour
+      const fundingDelta = calculateFundingForHours(
+        position,
+        fundingRate,
+        markPrice,
+        fullHoursElapsed,
+      );
+
+      // Update lastFundingUpdate to the start of the current hour
+      // This ensures we don't double-count partial hours
+      const hoursInMs = fullHoursElapsed * 60 * 60 * 1000;
+      const newLastUpdate = lastUpdate + hoursInMs;
+
+      // Update cumulative funding
+      const currentFunding = position.cumulativeFunding ?? 0;
+      const newFunding = currentFunding + fundingDelta;
+
+      // Update position with new funding and lastFundingUpdate timestamp
+      // Use newLastUpdate to avoid double-counting partial hours
+      await ctx.db.patch(position._id, {
+        cumulativeFunding: newFunding,
+        lastFundingUpdate: newLastUpdate,
+        updatedAt: now,
+      });
+
+      // Adjust balance based on funding (funding affects the perps balance)
+      await adjustPerpsBalance(ctx, user._id, position.collateral, fundingDelta);
+
+      updatedCount++;
+    }
+
+    return { updated: updatedCount };
   },
 });
 

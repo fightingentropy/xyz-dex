@@ -175,51 +175,23 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                     (m) => m.symbol === position.symbol && m.type === "perps",
                   );
 
-                  // Calculate cumulative funding
-                  // Funding is paid every 8 hours (3 times per day)
+                  // Show cumulative funding (calculated hourly based on funding rates)
+                  // Funding is calculated every hour based on the funding rate at that time
                   // For longs: positive funding rate means paying funding (negative), negative means receiving (positive)
                   // For shorts: opposite - positive funding rate means receiving funding (positive), negative means paying (negative)
-                  let cumulativeFunding = position.cumulativeFunding ?? 0;
+                  const cumulativeFunding = position.cumulativeFunding ?? 0;
 
-                  // If we have a stored cumulative funding value, use it
-                  if (cumulativeFunding !== 0) {
-                    const fundingColor =
-                      cumulativeFunding >= 0
-                        ? "text-brand-green-400"
-                        : "text-brand-red-400";
-                    return (
-                      <span class={`font-mono ${fundingColor}`}>
-                        {formatSignedUsd(cumulativeFunding)}
-                      </span>
-                    );
-                  }
-
-                  // Otherwise, calculate an estimate based on current funding rate and time elapsed
-                  if (market && market.funding !== undefined) {
-                    const fundingRate = market.funding; // Already in decimal form (e.g., 0.0001 = 0.01%)
-                    const positionNotional = Math.abs(position.size) * mark();
-                    const hoursSinceUpdate =
-                      (Date.now() - position.updatedAt) / (1000 * 60 * 60);
-                    const fundingPeriods = hoursSinceUpdate / 8; // Funding paid every 8 hours
-
-                    // For longs: if funding rate is positive, they pay (negative), if negative, they receive (positive)
-                    // For shorts: opposite
-                    const estimatedFunding = isLong
-                      ? -positionNotional * fundingRate * fundingPeriods
-                      : positionNotional * fundingRate * fundingPeriods;
-
-                    const fundingColor =
-                      estimatedFunding >= 0
-                        ? "text-brand-green-400"
-                        : "text-brand-red-400";
-                    return (
-                      <span class={`font-mono ${fundingColor}`}>
-                        {formatSignedUsd(estimatedFunding)}
-                      </span>
-                    );
-                  }
-
-                  return <span class="font-mono text-brand-slate-400">--</span>;
+                  // Always show the stored cumulative funding value (even if 0)
+                  // This is calculated properly in the backend based on hourly funding rates
+                  const fundingColor =
+                    cumulativeFunding >= 0
+                      ? "text-brand-green-400"
+                      : "text-brand-red-400";
+                  return (
+                    <span class={`font-mono ${fundingColor}`}>
+                      {formatSignedUsd(cumulativeFunding)}
+                    </span>
+                  );
                 };
 
                 return (

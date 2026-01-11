@@ -72,6 +72,7 @@ export default defineSchema({
     spotCollateralSize: v.optional(v.number()), // Amount of position backed by spot holdings
     realizedPnl: v.number(),
     cumulativeFunding: v.optional(v.number()), // Cumulative funding collected or paid
+    lastFundingUpdate: v.optional(v.number()), // Timestamp when funding was last calculated
     updatedAt: v.number(),
   })
     .index("by_user", ["userId"])
