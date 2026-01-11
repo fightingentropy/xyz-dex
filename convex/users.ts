@@ -136,6 +136,8 @@ export const ensureUser = mutation({
       };
       if (shouldBeAdmin && !existing.isAdmin) {
         updates.isAdmin = true;
+      } else if (existing.isAdmin == null) {
+        updates.isAdmin = false;
       }
       await ctx.db.patch(existing._id, updates);
       await seedDemoData(ctx, existing._id);
