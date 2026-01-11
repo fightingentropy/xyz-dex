@@ -10,9 +10,16 @@ import ChartsGrid from "./components/ChartsGrid";
 import TradePanel from "./components/TradePanel";
 import AuthModal from "./components/AuthModal";
 import TransferModal from "./components/TransferModal";
+import AdminDashboard from "./components/AdminDashboard";
 import { useLivePrices, showOrderBook } from "./stores/market";
 import { currentPage, setCurrentPage } from "./stores/page";
-import { authReady, isAuthenticated, login, logout } from "./stores/auth";
+import {
+  authReady,
+  isAdmin,
+  isAuthenticated,
+  login,
+  logout,
+} from "./stores/auth";
 
 const App: Component = () => {
   const [isTabVisible, setIsTabVisible] = createSignal(!document.hidden);
@@ -110,6 +117,13 @@ const App: Component = () => {
         </div>
       </Show>
 
+      {/* Admin View */}
+      <Show when={currentPage() === "admin"}>
+        <div class="flex-1 overflow-hidden">
+          <AdminDashboard />
+        </div>
+      </Show>
+
       {/* Mobile Bottom Nav */}
       <Show when={currentPage() !== "charts"}>
         <nav class="flex md:hidden items-center justify-around py-2 border-t border-brand-border bg-brand-surface">
@@ -175,6 +189,28 @@ const App: Component = () => {
             </svg>
             <span class="text-xs">Charts</span>
           </button>
+          <Show when={isAdmin()}>
+            <button
+              class={`flex flex-col items-center gap-1 ${currentPage() === "admin" ? "text-brand-accent" : "text-brand-slate-400"}`}
+              onClick={() => setCurrentPage("admin")}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12 3l8 4v4c0 5.55-3.84 10.74-8 12-4.16-1.26-8-6.45-8-12V7l8-4Z" />
+                <path d="M9 12l2 2 4-4" />
+              </svg>
+              <span class="text-xs">Admin</span>
+            </button>
+          </Show>
         </nav>
       </Show>
 

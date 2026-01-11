@@ -8,10 +8,12 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
 import type * as auth from "../auth.js";
 import type * as authData from "../authData.js";
 import type * as http from "../http.js";
 import type * as jwks from "../jwks.js";
+import type * as lib_admin from "../lib/admin.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_portfolio from "../lib/portfolio.js";
 import type * as orders from "../orders.js";
@@ -28,10 +30,12 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
   auth: typeof auth;
   authData: typeof authData;
   http: typeof http;
   jwks: typeof jwks;
+  "lib/admin": typeof lib_admin;
   "lib/auth": typeof lib_auth;
   "lib/portfolio": typeof lib_portfolio;
   orders: typeof orders;

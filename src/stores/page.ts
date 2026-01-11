@@ -2,7 +2,7 @@ import { createSignal } from "solid-js";
 import { normalizeSymbol } from "../lib/hyperliquid";
 import { currentSymbol, setCurrentSymbol, setCurrentMarket } from "./market";
 
-export type Page = "trade" | "portfolio" | "charts";
+export type Page = "trade" | "portfolio" | "charts" | "admin";
 
 // Parse URL to get initial state
 const parseUrl = (): { page: Page; symbol?: string } => {
@@ -23,6 +23,11 @@ const parseUrl = (): { page: Page; symbol?: string } => {
   // /charts
   if (path === "/charts") {
     return { page: "charts" };
+  }
+
+  // /admin
+  if (path === "/admin") {
+    return { page: "admin" };
   }
 
   // Default: / goes to trade
@@ -49,6 +54,8 @@ export const setCurrentPage = (page: Page) => {
     window.history.pushState({ page }, "", "/portfolio");
   } else if (page === "charts") {
     window.history.pushState({ page }, "", "/charts");
+  } else if (page === "admin") {
+    window.history.pushState({ page }, "", "/admin");
   } else {
     const symbol = currentSymbol();
     window.history.pushState({ page, symbol }, "", `/trade/${symbol}`);
@@ -63,6 +70,8 @@ window.addEventListener("popstate", (event) => {
     setCurrentPageInternal("portfolio");
   } else if (state?.page === "charts") {
     setCurrentPageInternal("charts");
+  } else if (state?.page === "admin") {
+    setCurrentPageInternal("admin");
   } else if (state?.page === "trade") {
     setCurrentPageInternal("trade");
     if (state.symbol) {
@@ -86,6 +95,8 @@ if (initialState.page === "portfolio") {
   window.history.replaceState({ page: "portfolio" }, "", "/portfolio");
 } else if (initialState.page === "charts") {
   window.history.replaceState({ page: "charts" }, "", "/charts");
+} else if (initialState.page === "admin") {
+  window.history.replaceState({ page: "admin" }, "", "/admin");
 } else {
   const symbol = currentSymbol();
   window.history.replaceState(

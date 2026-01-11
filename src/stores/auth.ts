@@ -1,7 +1,8 @@
-import { createRoot, createSignal } from "solid-js";
+import { createMemo, createRoot, createSignal } from "solid-js";
 import type { FunctionReference } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import { convex } from "../lib/convex";
+import { isAdminEmail } from "../lib/admin";
 
 type AuthUser = {
   email: string;
@@ -21,11 +22,13 @@ const actionRef = (name: string) =>
 
 const signInRef = actionRef("auth:signIn");
 const signUpRef = actionRef("auth:signUp");
+const ensureAdminRef = actionRef("auth:ensureAdmin");
 
 const {
   authReady,
   isAuthenticated,
   authUser,
+  isAdmin,
   authOpen,
   authLoading,
   authError,
@@ -44,6 +47,7 @@ const {
   const [authError, setAuthError] = createSignal<string | null>(null);
   const [authToken, setAuthToken] = createSignal<string | null>(null);
   const [authExpiresAt, setAuthExpiresAt] = createSignal<number | null>(null);
+  const isAdmin = createMemo(() => isAdminEmail(authUser()?.email));
 
   const readSession = (): AuthSession | null => {
     if (typeof window === "undefined") return null;
@@ -80,7 +84,7 @@ const {
     // First try to get from signal (for reactivity)
     let token = authToken();
     let expiresAt = authExpiresAt();
-    
+
     // Fallback to localStorage if signal hasn't updated yet
     if (!token || !expiresAt) {
       const session = readSession();
@@ -91,7 +95,7 @@ const {
         return null;
       }
     }
-    
+
     if (!token || !expiresAt) return null;
     if (Date.now() >= expiresAt) {
       clearSession();
@@ -104,6 +108,14 @@ const {
     convex.setAuth(async () => getValidToken());
   };
 
+  const ensureAdminAccount = async () => {
+    try {
+      await convex.action(ensureAdminRef, {});
+    } catch (error) {
+      console.warn("Failed to ensure admin account:", error);
+    }
+  };
+
   const ensureBackendUser = async (retries = 8, baseDelayMs = 200) => {
     if (!isAuthenticated()) return;
     // Verify token is available before making authenticated request
@@ -112,26 +124,26 @@ const {
       console.warn("Token not available for ensureBackendUser");
       return;
     }
-    
+
     // Give Convex time to establish the authenticated connection
     // after setAuth() is called
-    await new Promise(resolve => setTimeout(resolve, 300));
-    
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
     for (let attempt = 0; attempt < retries; attempt++) {
       try {
         await convex.mutation(api.users.ensureUser, {});
         return; // Success, exit
       } catch (error) {
-        const isAuthError = error instanceof Error && 
-          error.message.includes("Not authenticated");
-        
+        const isAuthError =
+          error instanceof Error && error.message.includes("Not authenticated");
+
         if (isAuthError && attempt < retries - 1) {
           // Auth not ready yet, wait and retry with exponential backoff
           const delay = baseDelayMs * Math.pow(2, attempt);
-          await new Promise(resolve => setTimeout(resolve, delay));
+          await new Promise((resolve) => setTimeout(resolve, delay));
           continue;
         }
-        
+
         // Non-auth error or final attempt
         console.error("Failed to initialize user:", error);
         return;
@@ -150,6 +162,7 @@ const {
   };
 
   const initAuth = async () => {
+    void ensureAdminAccount();
     const session = readSession();
     if (session && session.expiresAt > Date.now()) {
       setAuthToken(session.token);
@@ -262,6 +275,7 @@ const {
     authReady,
     isAuthenticated,
     authUser,
+    isAdmin,
     authOpen,
     authLoading,
     authError,
@@ -278,6 +292,7 @@ export {
   authReady,
   isAuthenticated,
   authUser,
+  isAdmin,
   authOpen,
   authLoading,
   authError,

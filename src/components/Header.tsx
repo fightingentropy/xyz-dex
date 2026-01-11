@@ -1,5 +1,11 @@
-import { Component, createSignal } from "solid-js";
-import { authReady, isAuthenticated, login, logout } from "../stores/auth";
+import { Component, Show, createSignal } from "solid-js";
+import {
+  authReady,
+  isAdmin,
+  isAuthenticated,
+  login,
+  logout,
+} from "../stores/auth";
 import {
   dataProvider,
   setDataProvider,
@@ -58,6 +64,18 @@ const Header: Component = () => {
           >
             <p class="truncate">Charts</p>
           </button>
+          <Show when={isAdmin()}>
+            <button
+              class={
+                currentPage() === "admin"
+                  ? "text-brand-accent"
+                  : "text-brand-slate-400 hover:text-brand-slate-100"
+              }
+              onClick={() => setCurrentPage("admin")}
+            >
+              <p class="truncate">Admin</p>
+            </button>
+          </Show>
         </nav>
       </div>
 
