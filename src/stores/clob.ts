@@ -12,14 +12,14 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { convex, createConvexQuery } from "../lib/convex";
 import { isAuthenticated } from "./auth";
 import { currentSymbol, markPrice, MARKETS } from "./market";
-import type { OrderBookLevel, L2Book as OrderBook } from "../lib/format";
+import type { L2Book as OrderBook } from "../lib/format";
 
 export type Collateral = "USDC" | "USDT";
 export type OrderSide = "buy" | "sell";
 export type OrderType = "market" | "limit";
 export type MarginType = "isolated" | "cross";
 
-export type { OrderBookLevel, OrderBook };
+export type { OrderBook };
 
 export type Order = Doc<"orders">;
 export type Position = Doc<"positions">;
@@ -90,7 +90,8 @@ const { openOrders, positions, perpsBalances, portfolioMarginStatus } =
         portfolioMarginQuery() as PortfolioMarginStatus,
     };
   });
-const [orderBooks, setOrderBooks] = createStore<Record<string, OrderBook>>({});
+const [orderBooks] = createStore<Record<string, OrderBook>>({});
+const EMPTY_BOOK: OrderBook = { asks: [], bids: [] };
 
 const parseNumber = (value: string | number): number => {
   const cleaned = String(value ?? "")
@@ -102,162 +103,12 @@ const parseNumber = (value: string | number): number => {
 
 const [lastPrices, setLastPrices] = createStore<Record<string, number>>({});
 
-const getTickSize = (price: number) => {
-  if (price >= 10000) return 10;
-  if (price >= 1000) return 1;
-  if (price >= 100) return 0.1;
-  if (price >= 10) return 0.01;
-  if (price >= 1) return 0.001;
-  return 0.0001;
-};
-
-const countDecimals = (value: number) => {
-  const text = value.toString();
-  if (!text.includes(".")) return 0;
-  return text.split(".")[1]?.length ?? 0;
-};
-
-const roundToTick = (value: number, tick: number) => {
-  const decimals = countDecimals(tick);
-  return Number((Math.round(value / tick) * tick).toFixed(decimals));
-};
-
-const LEVEL_COUNT = 24;
-const LIQUIDITY_FRACTION = 0.01;
-const MIN_LIQUIDITY_NOTIONAL = 150_000;
-const MAX_LIQUIDITY_NOTIONAL = 10_000_000;
-const BOOK_REFRESH_THRESHOLD = 0.0025;
 const ADL_COOLDOWN_MS = 4000;
 const ADL_REDUCTION_FRACTION = 0.25;
 const ADL_MIN_REDUCTION = 0.0001;
 
 const adlCooldownBySymbol = new Map<string, number>();
 const adlInFlight = new Set<string>();
-
-const levelMultiplier = (seed: number, index: number) => {
-  const wave = Math.sin(seed + index) * 10000;
-  const variation = wave - Math.floor(wave);
-  return 0.7 + variation * 0.6 + index * 0.02;
-};
-
-const getLiquidityNotional = (symbol: string) => {
-  // Use untrack to prevent creating a subscription to MARKETS inside effects
-  const market = untrack(() => MARKETS()).find(
-    (item) => item.symbol === symbol,
-  );
-  const volume = market?.volume24h ?? 75e6;
-  const notional = volume * LIQUIDITY_FRACTION;
-  return Math.min(
-    MAX_LIQUIDITY_NOTIONAL,
-    Math.max(MIN_LIQUIDITY_NOTIONAL, notional),
-  );
-};
-
-const recalcTotals = (levels: OrderBookLevel[]) => {
-  let running = 0;
-  return levels.map((level) => {
-    running += level.size;
-    return {
-      ...level,
-      total: running,
-    };
-  });
-};
-
-const normalizeSide = (levels: OrderBookLevel[], side: "bids" | "asks") => {
-  const sorted = [...levels].sort((a, b) => {
-    if (side === "bids") return b.price - a.price;
-    return a.price - b.price;
-  });
-  return recalcTotals(sorted);
-};
-
-const seedOrderBook = (symbol: string, midPrice: number): OrderBook => {
-  const priceBase = Math.max(midPrice, 1);
-  const tick = getTickSize(priceBase);
-  const seed = symbol
-    .split("")
-    .reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  const baseNotional = getLiquidityNotional(symbol);
-  const baseSize = baseNotional / priceBase / LEVEL_COUNT;
-  const asks: OrderBookLevel[] = [];
-  const bids: OrderBookLevel[] = [];
-  for (let i = 1; i <= LEVEL_COUNT; i += 1) {
-    const askSize = baseSize * levelMultiplier(seed, i);
-    const bidSize = baseSize * levelMultiplier(seed + 17, i);
-    asks.push({
-      price: roundToTick(priceBase + i * tick, tick),
-      size: Number(askSize.toFixed(4)),
-      total: 0,
-    });
-    bids.push({
-      price: roundToTick(priceBase - i * tick, tick),
-      size: Number(bidSize.toFixed(4)),
-      total: 0,
-    });
-  }
-  return {
-    asks: recalcTotals(asks),
-    bids: recalcTotals(bids),
-  };
-};
-
-const ensureOrderBook = (symbol: string) => {
-  if (orderBooks[symbol]) return;
-  const mid = getMarkPriceForSymbol(symbol) || 100;
-  setOrderBooks(symbol, seedOrderBook(symbol, mid));
-};
-
-const applyOpenOrdersToBook = (book: OrderBook, symbol: string) => {
-  const open = openOrders().filter(
-    (order) => order.symbol === symbol && order.status === "open",
-  );
-  if (open.length === 0) return book;
-  let nextBook: OrderBook = {
-    asks: book.asks,
-    bids: book.bids,
-  };
-  for (const order of open) {
-    if (order.price == null) continue;
-    const sideBook = order.side === "buy" ? "bids" : "asks";
-    const levels = addLiquidity(
-      nextBook[sideBook],
-      order.price,
-      order.size,
-      sideBook,
-    );
-    nextBook = {
-      ...nextBook,
-      [sideBook]: levels,
-    };
-  }
-  return nextBook;
-};
-
-const addLiquidity = (
-  levels: OrderBookLevel[],
-  price: number,
-  size: number,
-  side: "bids" | "asks",
-) => {
-  let matched = false;
-  const nextLevels = levels.map((level) => {
-    if (level.price === price) {
-      matched = true;
-      return {
-        ...level,
-        size: level.size + size,
-      };
-    }
-    return level;
-  });
-
-  if (!matched) {
-    nextLevels.push({ price, size, total: 0 });
-  }
-
-  return normalizeSide(nextLevels, side);
-};
 
 export const getMarkPriceForSymbol = (symbol: string) => {
   if (!symbol) return 0;
@@ -372,31 +223,6 @@ createRoot(() => {
         }
       }
     });
-  });
-
-  createEffect(() => {
-    const symbol = currentSymbol();
-    const mark = getMarkPriceForSymbol(symbol);
-    openOrders();
-    if (!Number.isFinite(mark) || mark <= 0) return;
-    const { hasBook, bestBid, bestAsk } = untrack(() => {
-      const book = orderBooks[symbol];
-      return {
-        hasBook: Boolean(book),
-        bestBid: book?.bids[0]?.price ?? 0,
-        bestAsk: book?.asks[0]?.price ?? 0,
-      };
-    });
-    if (!hasBook) {
-      setOrderBooks(symbol, seedOrderBook(symbol, mark));
-      return;
-    }
-    const mid = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : 0;
-    if (!mid) return;
-    const drift = Math.abs(mark - mid) / mid;
-    if (drift < BOOK_REFRESH_THRESHOLD) return;
-    const refreshed = seedOrderBook(symbol, mark);
-    setOrderBooks(symbol, applyOpenOrdersToBook(refreshed, symbol));
   });
 
   createEffect(() => {
@@ -525,8 +351,7 @@ createRoot(() => {
 });
 
 export const getOrderBook = (symbol: string) => {
-  ensureOrderBook(symbol);
-  return orderBooks[symbol];
+  return orderBooks[symbol] ?? EMPTY_BOOK;
 };
 
 export const getPositionForSymbol = (symbol: string) =>

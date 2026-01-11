@@ -32,7 +32,6 @@ const queryRef = <TArgs extends Record<string, any>, TResult>(name: string) =>
 
 const signInRef = actionRef("auth:signIn");
 const signUpRef = actionRef("auth:signUp");
-const ensureAdminRef = actionRef("auth:ensureAdmin");
 const currentUserRef = queryRef<{}, CurrentUser | null>("users:getCurrentUser");
 
 const {
@@ -127,14 +126,6 @@ const {
     convex.setAuth(async () => getValidToken());
   };
 
-  const ensureAdminAccount = async () => {
-    try {
-      await convex.action(ensureAdminRef, {});
-    } catch (error) {
-      console.warn("Failed to ensure admin account:", error);
-    }
-  };
-
   const ensureBackendUser = async (retries = 8, baseDelayMs = 200) => {
     if (!isAuthenticated()) return;
     // Verify token is available before making authenticated request
@@ -181,7 +172,6 @@ const {
   };
 
   const initAuth = async () => {
-    void ensureAdminAccount();
     const session = readSession();
     if (session && session.expiresAt > Date.now()) {
       setAuthToken(session.token);

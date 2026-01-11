@@ -5,7 +5,6 @@ import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { makeFunctionReference } from "convex/server";
 import type { Id } from "./_generated/dataModel";
-import { getAdminConfig } from "./lib/admin";
 
 type AuthAccount = {
   _id: Id<"authAccounts">;
@@ -215,47 +214,6 @@ export const signUp = action({
       passwordSalt,
       name,
     });
-  },
-});
-
-export const ensureAdmin = action({
-  args: {},
-  handler: async (ctx) => {
-    const { defaultEmail, defaultPassword, defaultName } = getAdminConfig();
-    const email = defaultEmail.trim();
-    const emailLower = normalizeEmail(email);
-    if (!isValidEmail(emailLower)) {
-      throw new Error("Admin email is invalid.");
-    }
-    if (defaultPassword.length < 8) {
-      throw new Error("Admin password must be at least 8 characters.");
-    }
-
-    const existing = await ctx.runQuery(getAccountByEmailRef, {
-      emailLower,
-    });
-    if (existing) {
-      return { email: existing.email, created: false };
-    }
-
-    const { passwordHash, passwordSalt } = createPasswordHash(defaultPassword);
-    const now = Date.now();
-    const name = normalizeName(defaultName);
-    const accountId = await ctx.runMutation(createAccountRef, {
-      email,
-      emailLower,
-      passwordHash,
-      passwordSalt,
-      name,
-      createdAt: now,
-    });
-
-    await ctx.runMutation(updateLoginTimestampRef, {
-      accountId,
-      lastLoginAt: now,
-    });
-
-    return { email, created: true };
   },
 });
 
