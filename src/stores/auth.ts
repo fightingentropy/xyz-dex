@@ -1,8 +1,7 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
 import type { FunctionReference } from "convex/server";
 import { api } from "../../convex/_generated/api";
-import { convex } from "../lib/convex";
-import { isAdminEmail } from "../lib/admin";
+import { convex, createConvexQuery } from "../lib/convex";
 
 type AuthUser = {
   email: string;
@@ -15,20 +14,33 @@ type AuthSession = {
   user: AuthUser;
 };
 
+type CurrentUser = {
+  _id: string;
+  name?: string;
+  email?: string;
+  isAdmin: boolean;
+  createdAt: number;
+  lastSeenAt: number;
+};
+
 const STORAGE_KEY = "trade_xyz_auth_session";
 
 const actionRef = (name: string) =>
   name as unknown as FunctionReference<"action">;
+const queryRef = <TArgs extends Record<string, any>, TResult>(name: string) =>
+  name as unknown as FunctionReference<"query", TArgs, TResult>;
 
 const signInRef = actionRef("auth:signIn");
 const signUpRef = actionRef("auth:signUp");
 const ensureAdminRef = actionRef("auth:ensureAdmin");
+const currentUserRef = queryRef<{}, CurrentUser | null>("users:getCurrentUser");
 
 const {
   authReady,
   isAuthenticated,
   authUser,
   isAdmin,
+  adminReady,
   authOpen,
   authLoading,
   authError,
@@ -47,7 +59,14 @@ const {
   const [authError, setAuthError] = createSignal<string | null>(null);
   const [authToken, setAuthToken] = createSignal<string | null>(null);
   const [authExpiresAt, setAuthExpiresAt] = createSignal<number | null>(null);
-  const isAdmin = createMemo(() => isAdminEmail(authUser()?.email));
+  const currentUserQuery = createConvexQuery(currentUserRef, () =>
+    isAuthenticated() ? {} : null,
+  );
+  const adminReady = createMemo(() => {
+    if (!isAuthenticated()) return true;
+    return currentUserQuery() !== undefined;
+  });
+  const isAdmin = createMemo(() => !!currentUserQuery()?.isAdmin);
 
   const readSession = (): AuthSession | null => {
     if (typeof window === "undefined") return null;
@@ -276,6 +295,7 @@ const {
     isAuthenticated,
     authUser,
     isAdmin,
+    adminReady,
     authOpen,
     authLoading,
     authError,
@@ -293,6 +313,7 @@ export {
   isAuthenticated,
   authUser,
   isAdmin,
+  adminReady,
   authOpen,
   authLoading,
   authError,

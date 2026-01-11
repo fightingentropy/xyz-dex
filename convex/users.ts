@@ -1,6 +1,7 @@
 import type { Id } from "./_generated/dataModel";
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
+import { getAuthUser } from "./lib/auth";
 const DEMO_SEED_VERSION = 4;
 const BASE_USDC_BALANCE = 1_000_000;
 
@@ -128,11 +129,28 @@ export const ensureUser = mutation({
       tokenIdentifier: identity.tokenIdentifier,
       name: identity.name ?? "Demo Trader",
       email: identity.email,
+      isAdmin: false,
       createdAt: now,
       lastSeenAt: now,
     });
 
     await seedDemoData(ctx, userId);
     return userId;
+  },
+});
+
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getAuthUser(ctx);
+    if (!user) return null;
+    return {
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      isAdmin: user.isAdmin ?? false,
+      createdAt: user.createdAt,
+      lastSeenAt: user.lastSeenAt,
+    };
   },
 });

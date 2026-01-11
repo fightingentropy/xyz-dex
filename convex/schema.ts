@@ -6,6 +6,7 @@ export default defineSchema({
     tokenIdentifier: v.optional(v.string()),
     name: v.optional(v.string()),
     email: v.optional(v.string()),
+    isAdmin: v.optional(v.boolean()),
     demoSeedVersion: v.optional(v.number()),
     deviceId: v.optional(v.string()), // Legacy field for old documents
     portfolioMarginEnabled: v.optional(v.boolean()), // Enable spot-collateralized perps

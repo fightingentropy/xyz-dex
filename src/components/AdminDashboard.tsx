@@ -4,6 +4,7 @@ import { createConvexQuery } from "../lib/convex";
 import {
   authReady,
   authUser,
+  adminReady,
   isAdmin,
   isAuthenticated,
   login,
@@ -59,7 +60,7 @@ const AdminDashboard: Component = () => {
   return (
     <div class="h-full overflow-y-auto px-4 py-6 sm:px-6 lg:px-8">
       <Show
-        when={authReady()}
+        when={authReady() && adminReady()}
         fallback={
           <div class="rounded-xl border border-brand-border bg-brand-surface p-6 text-sm text-brand-slate-400">
             Checking admin access...

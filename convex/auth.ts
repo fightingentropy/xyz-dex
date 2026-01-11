@@ -5,7 +5,7 @@ import { v } from "convex/values";
 import { action } from "./_generated/server";
 import { makeFunctionReference } from "convex/server";
 import type { Id } from "./_generated/dataModel";
-import { getAdminConfig, isAdminEmail } from "./lib/admin";
+import { getAdminConfig } from "./lib/admin";
 
 type AuthAccount = {
   _id: Id<"authAccounts">;
@@ -178,9 +178,6 @@ export const signUp = action({
     const emailLower = normalizeEmail(args.email);
     if (!isValidEmail(emailLower)) {
       throw new Error("Enter a valid email address.");
-    }
-    if (isAdminEmail(emailLower)) {
-      throw new Error("This email is reserved for administrators.");
     }
     if (args.password.length < 8) {
       throw new Error("Password must be at least 8 characters.");
