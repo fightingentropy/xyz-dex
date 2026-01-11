@@ -420,8 +420,110 @@ createRoot(() => {
     }
   });
 
-  // Update funding for positions periodically (every hour)
+  // Update funding for positions at funding payment times (7pm, 3am, 11am UK time)
   let fundingUpdateTimer: number | undefined;
+  let fundingUpdateTimeout: number | undefined;
+
+  /**
+   * Calculate the next funding payment time in UK timezone
+   * Funding payments occur at 7pm (19:00), 3am (03:00), and 11am (11:00) UK time (every 8 hours)
+   */
+  const getNextFundingPaymentTime = (): number => {
+    const now = new Date();
+    
+    // Get current time in UK (Europe/London timezone)
+    const formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Europe/London",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+    
+    const parts = formatter.formatToParts(now);
+    const getPart = (type: string) => {
+      const part = parts.find(p => p.type === type);
+      return part ? parseInt(part.value, 10) : 0;
+    };
+    
+    const ukYear = getPart("year");
+    const ukMonth = getPart("month") - 1; // JavaScript months are 0-indexed
+    const ukDay = getPart("day");
+    const ukHour = getPart("hour");
+    const ukMinute = getPart("minute");
+    const ukSecond = getPart("second");
+    
+    // Funding payment times: 7pm (19:00), 3am (03:00), 11am (11:00)
+    const fundingHours = [19, 3, 11]; // 7pm, 3am, 11am
+    
+    // Find the next funding hour
+    let nextHour = fundingHours.find(h => h > ukHour);
+    let daysToAdd = 0;
+    
+    if (nextHour === undefined) {
+      // Current hour is after 7pm, next payment is 3am tomorrow
+      nextHour = fundingHours[0]; // 3am
+      daysToAdd = 1;
+    }
+
+    // Calculate milliseconds until next funding payment in UK time
+    const currentUKTimeMs = (ukHour * 60 + ukMinute) * 60 * 1000 + ukSecond * 1000;
+    const nextUKTimeMs = nextHour * 60 * 60 * 1000;
+    let msUntilNext = nextUKTimeMs - currentUKTimeMs;
+    
+    if (msUntilNext <= 0) {
+      // Next payment is tomorrow
+      msUntilNext += 24 * 60 * 60 * 1000;
+    }
+    
+    // Now we need to convert this UK time difference to local time
+    // The trick: create two dates in UK timezone and see the difference in local time
+    const ukNowStr = `${ukYear}-${String(ukMonth + 1).padStart(2, "0")}-${String(ukDay).padStart(2, "0")}T${String(ukHour).padStart(2, "0")}:${String(ukMinute).padStart(2, "0")}:${String(ukSecond).padStart(2, "0")}`;
+    
+    // Create a date that represents "now" in UK timezone by parsing it
+    // We'll use the fact that we can create a date and then check what it is in UK vs local
+    const testDate1 = new Date(now.getTime());
+    const testDate2 = new Date(now.getTime() + 60 * 60 * 1000); // 1 hour later
+    
+    const uk1 = testDate1.toLocaleString("en-GB", { timeZone: "Europe/London" });
+    const uk2 = testDate2.toLocaleString("en-GB", { timeZone: "Europe/London" });
+    const local1 = testDate1.toLocaleString("en-GB");
+    const local2 = testDate2.toLocaleString("en-GB");
+    
+    const ukDiff = new Date(uk2).getTime() - new Date(uk1).getTime();
+    const localDiff = new Date(local2).getTime() - new Date(local1).getTime();
+    
+    // The ratio tells us how to convert UK time differences to local time
+    // For most cases, this will be 1:1, but during DST transitions it might differ slightly
+    const timeRatio = localDiff / ukDiff;
+    
+    // Calculate the target time
+    const targetLocalTime = now.getTime() + msUntilNext * timeRatio;
+    
+    return targetLocalTime;
+  };
+
+  const scheduleNextFundingUpdate = () => {
+    if (fundingUpdateTimeout) {
+      clearTimeout(fundingUpdateTimeout);
+      fundingUpdateTimeout = undefined;
+    }
+
+    const nextPaymentTime = getNextFundingPaymentTime();
+    const now = Date.now();
+    const delay = Math.max(0, nextPaymentTime - now);
+
+    fundingUpdateTimeout = setTimeout(() => {
+      void updateFunding().then(() => {
+        // After updating, schedule the next one (8 hours later)
+        scheduleNextFundingUpdate();
+      });
+    }, delay) as unknown as number;
+  };
+
   const updateFunding = async () => {
     if (!isAuthenticated()) return;
     const activePositions = positions();
@@ -458,21 +560,21 @@ createRoot(() => {
     }
   };
 
-  // Update funding immediately when positions change, then every hour
+  // Update funding immediately when positions change, then at funding payment times
   createEffect(() => {
     if (!isAuthenticated()) {
-      if (fundingUpdateTimer) {
-        clearInterval(fundingUpdateTimer);
-        fundingUpdateTimer = undefined;
+      if (fundingUpdateTimeout) {
+        clearTimeout(fundingUpdateTimeout);
+        fundingUpdateTimeout = undefined;
       }
       return;
     }
 
     const activePositions = positions();
     if (activePositions.length === 0) {
-      if (fundingUpdateTimer) {
-        clearInterval(fundingUpdateTimer);
-        fundingUpdateTimer = undefined;
+      if (fundingUpdateTimeout) {
+        clearTimeout(fundingUpdateTimeout);
+        fundingUpdateTimeout = undefined;
       }
       return;
     }
@@ -480,16 +582,13 @@ createRoot(() => {
     // Update immediately
     void updateFunding();
 
-    // Then update every hour (3600000 ms)
-    if (fundingUpdateTimer) {
-      clearInterval(fundingUpdateTimer);
-    }
-    fundingUpdateTimer = setInterval(updateFunding, 3600000) as unknown as number;
+    // Schedule next update at the next funding payment time
+    scheduleNextFundingUpdate();
 
     onCleanup(() => {
-      if (fundingUpdateTimer) {
-        clearInterval(fundingUpdateTimer);
-        fundingUpdateTimer = undefined;
+      if (fundingUpdateTimeout) {
+        clearTimeout(fundingUpdateTimeout);
+        fundingUpdateTimeout = undefined;
       }
     });
   });
