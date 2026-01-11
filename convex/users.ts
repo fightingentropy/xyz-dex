@@ -2,8 +2,15 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { getAuthUser } from "./lib/auth";
+import { getAdminConfig } from "./lib/admin";
 const DEMO_SEED_VERSION = 4;
 const BASE_USDC_BALANCE = 1_000_000;
+
+const normalizeEmail = (value?: string | null) =>
+  value?.trim().toLowerCase() ?? "";
+const adminEmail = normalizeEmail(getAdminConfig().defaultEmail);
+const isAdminEmail = (email?: string | null) =>
+  adminEmail.length > 0 && normalizeEmail(email) === adminEmail;
 
 const seedDemoData = async (ctx: MutationCtx, userId: Id<"users">) => {
   const user = await ctx.db.get(userId);
@@ -108,6 +115,7 @@ export const ensureUser = mutation({
       throw new Error("Not authenticated.");
     }
     const now = Date.now();
+    const shouldBeAdmin = isAdminEmail(identity.email);
     const existing = await ctx.db
       .query("users")
       .withIndex("by_token", (q) =>
@@ -116,11 +124,20 @@ export const ensureUser = mutation({
       .unique();
 
     if (existing) {
-      await ctx.db.patch(existing._id, {
+      const updates: {
+        lastSeenAt: number;
+        name?: string;
+        email?: string;
+        isAdmin?: boolean;
+      } = {
         lastSeenAt: now,
         name: identity.name ?? existing.name,
         email: identity.email ?? existing.email,
-      });
+      };
+      if (shouldBeAdmin && !existing.isAdmin) {
+        updates.isAdmin = true;
+      }
+      await ctx.db.patch(existing._id, updates);
       await seedDemoData(ctx, existing._id);
       return existing._id;
     }
@@ -129,7 +146,7 @@ export const ensureUser = mutation({
       tokenIdentifier: identity.tokenIdentifier,
       name: identity.name ?? "Demo Trader",
       email: identity.email,
-      isAdmin: false,
+      isAdmin: shouldBeAdmin,
       createdAt: now,
       lastSeenAt: now,
     });
