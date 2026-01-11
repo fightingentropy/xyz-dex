@@ -343,11 +343,12 @@ const triggerAdlReduction = async (position: Position, mark: number) => {
 };
 
 createRoot(() => {
-  // Sync prices for the current symbol from live markPrice
+  // Sync prices for the current symbol from live markPrice.
+  // Use untrack to avoid stamping the new symbol with the previous symbol's price.
   createEffect(() => {
-    const symbol = currentSymbol();
     const price = parseNumber(markPrice());
     if (Number.isFinite(price) && price > 0) {
+      const symbol = untrack(() => currentSymbol());
       setLastPrices(symbol, price);
     }
   });

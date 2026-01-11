@@ -14,16 +14,26 @@ import {
   Time,
   ColorType,
 } from "lightweight-charts";
-import type { IChartApi, ISeriesApi, LineData, IPriceLine } from "lightweight-charts";
-import { currentMarket, currentSymbol } from "../stores/market";
+import type {
+  IChartApi,
+  ISeriesApi,
+  LineData,
+  IPriceLine,
+} from "lightweight-charts";
+import { currentMarket, currentSymbol, dataProvider } from "../stores/market";
 import { getPositionForSymbol } from "../stores/clob";
 import {
-  fetchCandles,
+  fetchCandles as fetchBinanceCandles,
   resolutionToMs,
   Candle,
-  toInterval,
+  toInterval as toBinanceInterval,
   toBinanceSymbol,
 } from "../lib/binance";
+import {
+  fetchHyperliquidCandles,
+  normalizeSymbol,
+  toHyperliquidInterval,
+} from "../lib/hyperliquid";
 import {
   getCachedCandles,
   updateCachedCandles,
@@ -256,15 +266,42 @@ const TradingViewChart: Component = () => {
     return "outOfOrder";
   };
 
+  const fetchCandlesForProvider = async (
+    provider: "hyperliquid" | "binance",
+    symbol: string,
+    res: Resolution,
+    fromMs: number,
+    toMs: number,
+  ) => {
+    if (provider === "binance") {
+      return fetchBinanceCandles({
+        coin: symbol,
+        resolution: res,
+        fromMs,
+        toMs,
+      });
+    }
+    return fetchHyperliquidCandles({
+      coin: symbol,
+      resolution: res,
+      fromMs,
+      toMs,
+    });
+  };
+
   // Load candle data with caching
-  const loadCandles = async (symbol: string, res: Resolution) => {
+  const loadCandles = async (
+    symbol: string,
+    res: Resolution,
+    provider: "hyperliquid" | "binance",
+  ) => {
     // Don't load if chart isn't ready
     if (!chartReady() || !candleSeries) {
       return;
     }
 
-    const cacheKey = `${symbol}:${res}`;
-    const cached = getCachedCandles(symbol, res);
+    const cacheKey = `${provider}:${symbol}:${res}`;
+    const cached = getCachedCandles(provider, symbol, res);
     const now = Date.now();
     const periodMs = resolutionToMs(res);
     const barsCount = 500;
@@ -287,16 +324,18 @@ const TradingViewChart: Component = () => {
       const fromMs = cached.lastTimestamp - periodMs * 2;
 
       try {
-        const newCandles = await fetchCandles({
-          coin: symbol,
-          resolution: res,
+        const newCandles = await fetchCandlesForProvider(
+          provider,
+          symbol,
+          res,
           fromMs,
-          toMs: now,
-        });
+          now,
+        );
 
         if (newCandles.length > 0) {
           // Merge with cache and update chart
           const mergedCandles = updateCachedCandles(
+            provider,
             symbol,
             res,
             newCandles,
@@ -334,16 +373,17 @@ const TradingViewChart: Component = () => {
     try {
       const fromMs = now - periodMs * barsCount;
 
-      const candles = await fetchCandles({
-        coin: symbol,
-        resolution: res,
+      const candles = await fetchCandlesForProvider(
+        provider,
+        symbol,
+        res,
         fromMs,
-        toMs: now,
-      });
+        now,
+      );
 
       if (candles.length > 0) {
         // Cache the full data set
-        updateCachedCandles(symbol, res, candles, true);
+        updateCachedCandles(provider, symbol, res, candles, true);
 
         candleSeries.setData(formatCandleData(candles));
         if (volumeSeries) {
@@ -380,7 +420,11 @@ const TradingViewChart: Component = () => {
   };
 
   // Stream updates with cache integration
-  const startStreaming = (symbol: string, res: Resolution) => {
+  const startStreaming = (
+    symbol: string,
+    res: Resolution,
+    provider: "hyperliquid" | "binance",
+  ) => {
     stopStreaming();
 
     // Don't start streaming if chart isn't ready
@@ -389,9 +433,18 @@ const TradingViewChart: Component = () => {
     }
 
     const generation = streamGeneration;
-    const interval = toInterval(res);
-    const streamSymbol = toBinanceSymbol(symbol).toLowerCase();
-    const streamUrl = `wss://fstream.binance.com/ws/${streamSymbol}@kline_${interval}`;
+    const interval =
+      provider === "binance"
+        ? toBinanceInterval(res)
+        : toHyperliquidInterval(res);
+    const streamSymbol =
+      provider === "binance"
+        ? toBinanceSymbol(symbol).toLowerCase()
+        : normalizeSymbol(symbol);
+    const streamUrl =
+      provider === "binance"
+        ? `wss://fstream.binance.com/ws/${streamSymbol}@kline_${interval}`
+        : "wss://api.hyperliquid.xyz/ws";
 
     const connect = () => {
       if (generation !== streamGeneration) return;
@@ -399,24 +452,58 @@ const TradingViewChart: Component = () => {
       const socket = new WebSocket(streamUrl);
       streamSocket = socket;
 
+      socket.onopen = () => {
+        if (provider === "hyperliquid") {
+          socket.send(
+            JSON.stringify({
+              method: "subscribe",
+              subscription: {
+                type: "candle",
+                coin: streamSymbol,
+                interval,
+              },
+            }),
+          );
+        }
+      };
+
       socket.onmessage = (event) => {
         if (generation !== streamGeneration) return;
 
         try {
           const payload = JSON.parse(event.data);
-          const kline = payload?.k;
-          if (!kline) return;
+          let candle: Candle | null = null;
+          if (provider === "binance") {
+            const kline = payload?.k;
+            if (!kline) return;
+            candle = {
+              time: Number(kline.t),
+              open: Number(kline.o),
+              high: Number(kline.h),
+              low: Number(kline.l),
+              close: Number(kline.c),
+              volume: Number(kline.v),
+            };
+          } else {
+            if (payload?.channel === "error") {
+              socket.close();
+              return;
+            }
+            if (payload?.channel !== "candle") return;
+            const data = payload?.data;
+            if (!data) return;
+            candle = {
+              time: Number(data.t),
+              open: Number(data.o),
+              high: Number(data.h),
+              low: Number(data.l),
+              close: Number(data.c),
+              volume: Number(data.v),
+            };
+          }
+          if (!candle || !Number.isFinite(candle.time)) return;
 
-          const candle: Candle = {
-            time: Number(kline.t),
-            open: Number(kline.o),
-            high: Number(kline.h),
-            low: Number(kline.l),
-            close: Number(kline.c),
-            volume: Number(kline.v),
-          };
-
-          updateLastCandle(symbol, res, candle);
+          updateLastCandle(provider, symbol, res, candle);
           const updateMode = upsertLocalCandle(candle);
           if (updateMode === "outOfOrder") {
             refreshMovingAveragesFull(localCandles);
@@ -612,10 +699,11 @@ const TradingViewChart: Component = () => {
     const res = resolution();
     const ready = chartReady();
     const visible = isTabVisible();
+    const provider = dataProvider();
 
     if (ready && visible) {
-      loadCandles(symbol, res);
-      startStreaming(symbol, res);
+      loadCandles(symbol, res, provider);
+      startStreaming(symbol, res, provider);
     } else if (ready) {
       stopStreaming();
     }

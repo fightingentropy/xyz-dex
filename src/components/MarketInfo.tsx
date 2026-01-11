@@ -1,4 +1,10 @@
-import { Component, Show } from "solid-js";
+import {
+  Component,
+  Show,
+  createEffect,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 import {
   currentMarket,
   currentMarketLeverage,
@@ -31,6 +37,8 @@ const ChevronDown = () => (
 );
 
 const MarketInfo: Component = () => {
+  const [fundingCountdown, setFundingCountdown] = createSignal("00:00:00");
+
   const leverageLabel = () =>
     currentMarketType() === "spot" ? "Spot" : currentMarketLeverage();
   const changeColor = () => {
@@ -50,6 +58,33 @@ const MarketInfo: Component = () => {
     return rate.startsWith("-") ? "text-brand-red-400" : "text-brand-green-400";
   };
 
+  const formatFundingCountdown = () => {
+    const intervalMs = 8 * 60 * 60 * 1000;
+    const now = Date.now();
+    const next = Math.ceil(now / intervalMs) * intervalMs;
+    const remaining = Math.max(0, next - now);
+    const totalSeconds = Math.floor(remaining / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return [
+      String(hours).padStart(2, "0"),
+      String(minutes).padStart(2, "0"),
+      String(seconds).padStart(2, "0"),
+    ].join(":");
+  };
+
+  createEffect(() => {
+    if (currentMarketType() === "spot") {
+      setFundingCountdown("--:--:--");
+      return;
+    }
+    const update = () => setFundingCountdown(formatFundingCountdown());
+    update();
+    const timer = setInterval(update, 1000);
+    onCleanup(() => clearInterval(timer));
+  });
+
   return (
     <div class="flex items-center gap-4 px-4 py-2 bg-brand-surface border-b border-brand-border">
       {/* Market Selector */}
@@ -65,7 +100,11 @@ const MarketInfo: Component = () => {
             </div>
           }
         >
-          <img src={`/${currentSymbol().toLowerCase()}.svg`} alt={currentSymbol()} class="w-6 h-6" />
+          <img
+            src={`/${currentSymbol().toLowerCase()}.svg`}
+            alt={currentSymbol()}
+            class="w-6 h-6"
+          />
         </Show>
         <span class="font-semibold text-slate-100">{currentMarket()}</span>
         <span class="text-xs px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded">
@@ -102,8 +141,13 @@ const MarketInfo: Component = () => {
             <span class="text-xs text-brand-slate-500">Open Interest</span>
           </div>
           <div class="flex flex-col">
-            <span class={`font-mono ${fundingColor()}`}>{fundingRate()}</span>
-            <span class="text-xs text-brand-slate-500">8h Funding</span>
+            <div class="flex items-center gap-3">
+              <span class={`font-mono ${fundingColor()}`}>{fundingRate()}</span>
+              <span class="font-mono text-slate-200">{fundingCountdown()}</span>
+            </div>
+            <span class="text-xs text-brand-slate-500">
+              Funding / Countdown
+            </span>
           </div>
         </Show>
       </div>

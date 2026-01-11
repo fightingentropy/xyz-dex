@@ -1,6 +1,12 @@
 import { Component, createSignal } from "solid-js";
 import { authReady, isAuthenticated, login, logout } from "../stores/auth";
-import { showOrderBook, setShowOrderBook } from "../stores/market";
+import {
+  dataProvider,
+  setDataProvider,
+  showOrderBook,
+  setShowOrderBook,
+} from "../stores/market";
+import type { DataProvider } from "../stores/market";
 import { currentPage, setCurrentPage } from "../stores/page";
 
 const Header: Component = () => {
@@ -9,7 +15,10 @@ const Header: Component = () => {
   return (
     <header class="bg-brand-screen top-0 z-25 hidden items-center gap-2 px-3 py-2 sm:px-4 md:flex">
       <div class="flex items-center gap-6 pr-4 font-mono text-sm">
-        <button onClick={() => setCurrentPage("trade")} class="flex items-center">
+        <button
+          onClick={() => setCurrentPage("trade")}
+          class="flex items-center"
+        >
           <img
             alt="XYZ"
             width="68"
@@ -113,6 +122,25 @@ const Header: Component = () => {
                       class={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${showOrderBook() ? "translate-x-5" : "translate-x-0.5"}`}
                     />
                   </button>
+                </label>
+
+                <div class="px-3 py-2 border-t border-brand-border">
+                  <span class="text-xs font-medium text-brand-slate-400 uppercase tracking-wider">
+                    Data
+                  </span>
+                </div>
+                <label class="flex items-center justify-between px-3 py-2.5 hover:bg-brand-border/30 cursor-pointer transition-colors">
+                  <span class="text-sm text-slate-200">Provider</span>
+                  <select
+                    class="rounded border border-brand-border bg-brand-screen px-2 py-1 text-xs text-slate-200 focus:border-brand-accent"
+                    value={dataProvider()}
+                    onChange={(event) =>
+                      setDataProvider(event.currentTarget.value as DataProvider)
+                    }
+                  >
+                    <option value="hyperliquid">Hyperliquid</option>
+                    <option value="binance">Binance</option>
+                  </select>
                 </label>
               </div>
             </>

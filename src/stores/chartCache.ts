@@ -1,7 +1,8 @@
 import type { Candle } from "../lib/binance";
+import type { DataProvider } from "./market";
 
 const CACHE_KEY = "trade-xyz-chart-cache";
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const MAX_CACHE_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_CANDLES_PER_KEY = 1000;
 
@@ -85,27 +86,33 @@ if (typeof window !== "undefined") {
 }
 
 // Generate cache key
-export const getCacheKey = (symbol: string, resolution: string): string => {
-  return `${symbol}:${resolution}`;
+export const getCacheKey = (
+  provider: DataProvider,
+  symbol: string,
+  resolution: string,
+): string => {
+  return `${provider}:${symbol}:${resolution}`;
 };
 
 // Get cached candles
 export const getCachedCandles = (
+  provider: DataProvider,
   symbol: string,
   resolution: string,
 ): CacheEntry | null => {
-  const key = getCacheKey(symbol, resolution);
+  const key = getCacheKey(provider, symbol, resolution);
   return memoryCache.get(key) || null;
 };
 
 // Update cache with new candles
 export const updateCachedCandles = (
+  provider: DataProvider,
   symbol: string,
   resolution: string,
   newCandles: Candle[],
   replaceAll: boolean = false,
 ): Candle[] => {
-  const key = getCacheKey(symbol, resolution);
+  const key = getCacheKey(provider, symbol, resolution);
   const existing = memoryCache.get(key);
 
   let mergedCandles: Candle[];
@@ -149,11 +156,12 @@ export const updateCachedCandles = (
 
 // Update just the last candle (for real-time updates)
 export const updateLastCandle = (
+  provider: DataProvider,
   symbol: string,
   resolution: string,
   candle: Candle,
 ): void => {
-  const key = getCacheKey(symbol, resolution);
+  const key = getCacheKey(provider, symbol, resolution);
   const existing = memoryCache.get(key);
 
   if (!existing) return;

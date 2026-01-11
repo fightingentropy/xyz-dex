@@ -63,7 +63,7 @@ export const toggleWatchlist = (symbol: string) => {
     prev.map((m) => ({
       ...m,
       watchlist: watchlistSet.has(m.symbol),
-    }))
+    })),
   );
 };
 
@@ -71,21 +71,33 @@ export const toggleWatchlist = (symbol: string) => {
 const SETTINGS_KEY = "trade-xyz-settings";
 const LAST_SYMBOL_KEY = "trade-xyz-last-symbol";
 const DEFAULT_SYMBOL = "HYPE";
+export type DataProvider = "hyperliquid" | "binance";
+const DEFAULT_DATA_PROVIDER: DataProvider = "hyperliquid";
 
 interface Settings {
   showOrderBook: boolean;
+  dataProvider: DataProvider;
 }
 
 const loadSettings = (): Settings => {
   try {
     const stored = localStorage.getItem(SETTINGS_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored) as Partial<Settings>;
+      const dataProvider =
+        parsed.dataProvider === "binance" ||
+        parsed.dataProvider === "hyperliquid"
+          ? parsed.dataProvider
+          : DEFAULT_DATA_PROVIDER;
+      return {
+        showOrderBook: parsed.showOrderBook ?? true,
+        dataProvider,
+      };
     }
   } catch (e) {
     // Ignore parse errors
   }
-  return { showOrderBook: true };
+  return { showOrderBook: true, dataProvider: DEFAULT_DATA_PROVIDER };
 };
 
 const saveSettings = (settings: Settings) => {
@@ -155,12 +167,23 @@ const [searchOpen, setSearchOpen] = createSignal(false);
 const [showOrderBook, setShowOrderBookInternal] = createSignal(
   initialSettings.showOrderBook,
 );
+const [dataProvider, setDataProviderInternal] = createSignal<DataProvider>(
+  initialSettings.dataProvider,
+);
 
 // Wrapper to persist showOrderBook changes
 const setShowOrderBook = (value: boolean | ((prev: boolean) => boolean)) => {
   const newValue = typeof value === "function" ? value(showOrderBook()) : value;
   setShowOrderBookInternal(newValue);
-  saveSettings({ showOrderBook: newValue });
+  saveSettings({ showOrderBook: newValue, dataProvider: dataProvider() });
+};
+
+const setDataProvider = (
+  value: DataProvider | ((prev: DataProvider) => DataProvider),
+) => {
+  const newValue = typeof value === "function" ? value(dataProvider()) : value;
+  setDataProviderInternal(newValue);
+  saveSettings({ showOrderBook: showOrderBook(), dataProvider: newValue });
 };
 
 const setCurrentSymbol = (value: string | ((prev: string) => string)) => {
@@ -202,6 +225,8 @@ export {
   setSearchOpen,
   showOrderBook,
   setShowOrderBook,
+  dataProvider,
+  setDataProvider,
 };
 
 export const selectMarket = (market: Market) => {

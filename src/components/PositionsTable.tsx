@@ -7,7 +7,8 @@ import {
   getMarkPriceForSymbol,
   positions,
 } from "../stores/clob";
-import { MARKETS } from "../stores/market";
+import { MARKETS, setCurrentSymbol } from "../stores/market";
+import { setCurrentPage } from "../stores/page";
 
 const columns = [
   "Asset",
@@ -55,6 +56,10 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
     }
     return totals;
   });
+  const goToTrade = (symbol: string) => {
+    setCurrentSymbol(symbol);
+    setCurrentPage("trade");
+  };
 
   return (
     <div class="overflow-x-auto">
@@ -224,11 +229,13 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                   >
                     <td class={`${cellPadding} ${textSize}`}>
                       <div class="flex items-center gap-2">
-                        <span
-                          class={`font-semibold ${isLong ? "text-brand-green-400" : "text-brand-red-400"}`}
+                        <button
+                          type="button"
+                          class={`font-semibold hover:underline ${isLong ? "text-brand-green-400" : "text-brand-red-400"}`}
+                          onClick={() => goToTrade(position.symbol)}
                         >
                           {position.symbol}
-                        </span>
+                        </button>
                         <span class="text-xs text-brand-slate-400">
                           {position.leverage}x
                         </span>

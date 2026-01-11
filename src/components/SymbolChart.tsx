@@ -15,17 +15,23 @@ import {
 } from "lightweight-charts";
 import type { IChartApi, ISeriesApi } from "lightweight-charts";
 import {
-  fetchCandles,
+  fetchCandles as fetchBinanceCandles,
   resolutionToMs,
   Candle,
-  toInterval,
+  toInterval as toBinanceInterval,
   toBinanceSymbol,
 } from "../lib/binance";
+import {
+  fetchHyperliquidCandles,
+  normalizeSymbol,
+  toHyperliquidInterval,
+} from "../lib/hyperliquid";
 import {
   getCachedCandles,
   updateCachedCandles,
   updateLastCandle,
 } from "../stores/chartCache";
+import { dataProvider } from "../stores/market";
 
 interface SymbolChartProps {
   symbol: string;
@@ -118,11 +124,38 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     return "outOfOrder";
   };
 
-  const loadCandles = async (symbol: string, resolution: string) => {
+  const fetchCandlesForProvider = async (
+    provider: "hyperliquid" | "binance",
+    symbol: string,
+    resolution: string,
+    fromMs: number,
+    toMs: number,
+  ) => {
+    if (provider === "binance") {
+      return fetchBinanceCandles({
+        coin: symbol,
+        resolution,
+        fromMs,
+        toMs,
+      });
+    }
+    return fetchHyperliquidCandles({
+      coin: symbol,
+      resolution,
+      fromMs,
+      toMs,
+    });
+  };
+
+  const loadCandles = async (
+    symbol: string,
+    resolution: string,
+    provider: "hyperliquid" | "binance",
+  ) => {
     if (!chartReady() || !candleSeries) return;
 
-    const cacheKey = `${symbol}:${resolution}`;
-    const cached = getCachedCandles(symbol, resolution);
+    const cacheKey = `${provider}:${symbol}:${resolution}`;
+    const cached = getCachedCandles(provider, symbol, resolution);
     const now = Date.now();
     const periodMs = resolutionToMs(resolution);
     const barsCount = 400;
@@ -138,15 +171,17 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
       const fromMs = cached.lastTimestamp - periodMs * 2;
 
       try {
-        const newCandles = await fetchCandles({
-          coin: symbol,
+        const newCandles = await fetchCandlesForProvider(
+          provider,
+          symbol,
           resolution,
           fromMs,
-          toMs: now,
-        });
+          now,
+        );
 
         if (newCandles.length > 0) {
           const mergedCandles = updateCachedCandles(
+            provider,
             symbol,
             resolution,
             newCandles,
@@ -176,15 +211,16 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     try {
       const fromMs = now - periodMs * barsCount;
 
-      const candles = await fetchCandles({
-        coin: symbol,
+      const candles = await fetchCandlesForProvider(
+        provider,
+        symbol,
         resolution,
         fromMs,
-        toMs: now,
-      });
+        now,
+      );
 
       if (candles.length > 0) {
-        updateCachedCandles(symbol, resolution, candles, true);
+        updateCachedCandles(provider, symbol, resolution, candles, true);
         candleSeries.setData(formatCandleData(candles));
         volumeSeries?.setData(formatVolumeData(candles));
         localCandles = candles;
@@ -212,15 +248,28 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     }
   };
 
-  const startStreaming = (symbol: string, resolution: string) => {
+  const startStreaming = (
+    symbol: string,
+    resolution: string,
+    provider: "hyperliquid" | "binance",
+  ) => {
     stopStreaming();
 
     if (!chartReady() || !candleSeries) return;
 
     const generation = streamGeneration;
-    const interval = toInterval(resolution);
-    const streamSymbol = toBinanceSymbol(symbol).toLowerCase();
-    const streamUrl = `wss://fstream.binance.com/ws/${streamSymbol}@kline_${interval}`;
+    const interval =
+      provider === "binance"
+        ? toBinanceInterval(resolution)
+        : toHyperliquidInterval(resolution);
+    const streamSymbol =
+      provider === "binance"
+        ? toBinanceSymbol(symbol).toLowerCase()
+        : normalizeSymbol(symbol);
+    const streamUrl =
+      provider === "binance"
+        ? `wss://fstream.binance.com/ws/${streamSymbol}@kline_${interval}`
+        : "wss://api.hyperliquid.xyz/ws";
 
     const connect = () => {
       if (generation !== streamGeneration) return;
@@ -228,24 +277,58 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
       const socket = new WebSocket(streamUrl);
       streamSocket = socket;
 
+      socket.onopen = () => {
+        if (provider === "hyperliquid") {
+          socket.send(
+            JSON.stringify({
+              method: "subscribe",
+              subscription: {
+                type: "candle",
+                coin: streamSymbol,
+                interval,
+              },
+            }),
+          );
+        }
+      };
+
       socket.onmessage = (event) => {
         if (generation !== streamGeneration) return;
 
         try {
           const payload = JSON.parse(event.data);
-          const kline = payload?.k;
-          if (!kline) return;
+          let candle: Candle | null = null;
+          if (provider === "binance") {
+            const kline = payload?.k;
+            if (!kline) return;
+            candle = {
+              time: Number(kline.t),
+              open: Number(kline.o),
+              high: Number(kline.h),
+              low: Number(kline.l),
+              close: Number(kline.c),
+              volume: Number(kline.v),
+            };
+          } else {
+            if (payload?.channel === "error") {
+              socket.close();
+              return;
+            }
+            if (payload?.channel !== "candle") return;
+            const data = payload?.data;
+            if (!data) return;
+            candle = {
+              time: Number(data.t),
+              open: Number(data.o),
+              high: Number(data.h),
+              low: Number(data.l),
+              close: Number(data.c),
+              volume: Number(data.v),
+            };
+          }
+          if (!candle || !Number.isFinite(candle.time)) return;
 
-          const candle: Candle = {
-            time: Number(kline.t),
-            open: Number(kline.o),
-            high: Number(kline.h),
-            low: Number(kline.l),
-            close: Number(kline.c),
-            volume: Number(kline.v),
-          };
-
-          updateLastCandle(symbol, resolution, candle);
+          updateLastCandle(provider, symbol, resolution, candle);
           upsertLocalCandle(candle);
 
           candleSeries?.update({
@@ -399,10 +482,11 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     const resolution = props.resolution;
     const ready = chartReady();
     const visible = isTabVisible();
+    const provider = dataProvider();
 
     if (ready && visible) {
-      loadCandles(symbol, resolution);
-      startStreaming(symbol, resolution);
+      loadCandles(symbol, resolution, provider);
+      startStreaming(symbol, resolution, provider);
     } else if (ready) {
       stopStreaming();
     }

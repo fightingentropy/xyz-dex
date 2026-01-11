@@ -1,8 +1,8 @@
 import type { Id } from "./_generated/dataModel";
 import { mutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
-const DEMO_SEED_VERSION = 3;
-const BASE_USDC_BALANCE = 100_000;
+const DEMO_SEED_VERSION = 4;
+const BASE_USDC_BALANCE = 1_000_000;
 
 const seedDemoData = async (ctx: MutationCtx, userId: Id<"users">) => {
   const user = await ctx.db.get(userId);

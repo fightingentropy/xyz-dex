@@ -5,7 +5,12 @@ import {
   createMemo,
   createSignal,
 } from "solid-js";
-import { currentMarketType, currentSymbol } from "../stores/market";
+import {
+  MARKETS,
+  currentMarketLeverage,
+  currentMarketType,
+  currentSymbol,
+} from "../stores/market";
 import {
   Collateral,
   getAvailableBalance,
@@ -24,10 +29,13 @@ import { portfolioMetrics } from "../stores/portfolio";
 type OrderSide = "long" | "short";
 type OrderType = "market" | "limit";
 
+const DEFAULT_LEVERAGE = 10;
+const BASE_LEVERAGE_OPTIONS = [2, 5, 10, 15, 20, 25, 35, 50, 75, 100];
+
 const OrderForm: Component = () => {
   const [side, setSide] = createSignal<OrderSide>("long");
   const [orderType, setOrderType] = createSignal<OrderType>("market");
-  const [leverage, setLeverage] = createSignal(25);
+  const [leverage, setLeverage] = createSignal(DEFAULT_LEVERAGE);
   const [leverageMenuOpen, setLeverageMenuOpen] = createSignal(false);
   const [marginType, setMarginType] = createSignal<"isolated" | "cross">(
     "cross",
@@ -52,7 +60,25 @@ const OrderForm: Component = () => {
     return isSpotAsset(symbol) ? symbol : null;
   });
   const effectiveLeverage = createMemo(() => (isSpot() ? 1 : leverage()));
-  const leverageOptions = [2, 5, 10, 15, 20, 25, 35, 50, 75, 100];
+  const maxLeverage = createMemo(() => {
+    if (isSpot()) return 1;
+    const symbol = currentSymbol();
+    const market =
+      MARKETS().find(
+        (item) => item.symbol === symbol && item.type === "perps",
+      ) ?? MARKETS().find((item) => item.symbol === symbol);
+    const leverageLabel = market?.leverage ?? currentMarketLeverage();
+    const parsed = Number.parseFloat(leverageLabel);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_LEVERAGE;
+  });
+  const leverageOptions = createMemo(() => {
+    const max = maxLeverage();
+    const filtered = BASE_LEVERAGE_OPTIONS.filter((option) => option <= max);
+    if (max > 1 && !filtered.includes(max)) {
+      filtered.push(max);
+    }
+    return filtered.sort((a, b) => a - b);
+  });
   const currentPosition = createMemo(() =>
     getPositionForSymbol(currentSymbol()),
   );
@@ -135,17 +161,247 @@ const OrderForm: Component = () => {
     return unhedgedValue / effectiveLeverage();
   });
 
+  const signedOrderSize = createMemo(() => {
+    const size = orderSize();
+    if (!Number.isFinite(size) || size <= 0) return 0;
+    return isLong() ? size : -size;
+  });
+
+  const currentMarginUsed = createMemo(() => {
+    if (isSpot()) return 0;
+    const col = collateral();
+    return positions()
+      .filter((pos) => pos.collateral === col)
+      .reduce((sum, pos) => {
+        if (pos.leverage <= 0) return sum;
+        if (!Number.isFinite(pos.entryPrice) || pos.entryPrice <= 0) {
+          return sum;
+        }
+        const spotCollateral = pos.spotCollateralSize ?? 0;
+        const unhedgedSize = Math.max(0, Math.abs(pos.size) - spotCollateral);
+        return sum + (unhedgedSize * pos.entryPrice) / pos.leverage;
+      }, 0);
+  });
+
+  const nextMarginUsed = createMemo(() => {
+    if (isSpot()) return 0;
+    const col = collateral();
+    const signedSize = signedOrderSize();
+    const markPrice = mark();
+    const nextLeverage = leverage();
+    const portfolioEnabled = isPortfolioMarginEnabled();
+    const spotBalance = spotBalanceForSymbol();
+    let marginUsed = 0;
+    let applied = false;
+
+    for (const position of positions().filter(
+      (pos) => pos.collateral === col,
+    )) {
+      let nextSize = position.size;
+      let leverageValue = position.leverage;
+      let price = position.entryPrice;
+      let spotCollateral = position.spotCollateralSize ?? 0;
+
+      if (position.symbol === currentSymbol()) {
+        applied = true;
+        nextSize = position.size + signedSize;
+        leverageValue = nextLeverage;
+        price = markPrice;
+        if (portfolioEnabled) {
+          spotCollateral =
+            nextSize < 0 ? Math.min(spotBalance, Math.abs(nextSize)) : 0;
+        } else {
+          spotCollateral = 0;
+        }
+      }
+
+      if (nextSize === 0 || leverageValue <= 0) continue;
+      if (!Number.isFinite(price) || price <= 0) continue;
+      const unhedgedSize = Math.max(0, Math.abs(nextSize) - spotCollateral);
+      marginUsed += (unhedgedSize * price) / leverageValue;
+    }
+
+    if (!applied && signedSize !== 0) {
+      if (nextLeverage > 0 && Number.isFinite(markPrice) && markPrice > 0) {
+        const spotCollateral =
+          portfolioEnabled && signedSize < 0
+            ? Math.min(spotBalance, Math.abs(signedSize))
+            : 0;
+        const unhedgedSize = Math.max(0, Math.abs(signedSize) - spotCollateral);
+        marginUsed += (unhedgedSize * markPrice) / nextLeverage;
+      }
+    }
+
+    return marginUsed;
+  });
+
+  const unrealizedByCollateral = createMemo(() => {
+    const totals: Record<Collateral, number> = { USDC: 0, USDT: 0 };
+    for (const position of positions()) {
+      const currentMark = getMarkPriceForSymbol(position.symbol);
+      if (!Number.isFinite(currentMark) || currentMark <= 0) continue;
+      totals[position.collateral] +=
+        (currentMark - position.entryPrice) * position.size;
+    }
+    return totals;
+  });
+
+  const currentPositionUnrealized = createMemo(() => {
+    const position = currentPosition();
+    if (!position) return 0;
+    const currentMark = getMarkPriceForSymbol(position.symbol);
+    if (!Number.isFinite(currentMark) || currentMark <= 0) return 0;
+    return (currentMark - position.entryPrice) * position.size;
+  });
+
+  const previewPosition = createMemo(() => {
+    if (isSpot()) return null;
+    const position = currentPosition();
+    const signedSize = signedOrderSize();
+    if (!position && signedSize === 0) return null;
+    if (position && signedSize === 0) {
+      return {
+        size: position.size,
+        entryPrice: position.entryPrice,
+        leverage: position.leverage,
+        marginType: position.marginType ?? "cross",
+        collateral: position.collateral,
+      };
+    }
+    const price = orderPrice();
+    if (!Number.isFinite(price) || price <= 0) return null;
+
+    if (!position) {
+      return {
+        size: signedSize,
+        entryPrice: price,
+        leverage: leverage(),
+        marginType: marginType(),
+        collateral: collateral(),
+      };
+    }
+
+    const nextSize = position.size + signedSize;
+    const sameDirection =
+      Math.sign(position.size) === Math.sign(signedSize) || signedSize === 0;
+
+    if (sameDirection) {
+      const totalAbs = Math.abs(position.size) + Math.abs(signedSize);
+      const entryPrice =
+        totalAbs === 0
+          ? price
+          : (position.entryPrice * Math.abs(position.size) +
+              price * Math.abs(signedSize)) /
+            totalAbs;
+      return {
+        size: nextSize,
+        entryPrice,
+        leverage: leverage(),
+        marginType: marginType(),
+        collateral: collateral(),
+      };
+    }
+
+    const absSigned = Math.abs(signedSize);
+    const absExisting = Math.abs(position.size);
+    if (absSigned < absExisting) {
+      return {
+        size: nextSize,
+        entryPrice: position.entryPrice,
+        leverage: position.leverage,
+        marginType: position.marginType ?? "cross",
+        collateral: position.collateral,
+      };
+    }
+
+    if (absSigned === absExisting) return null;
+    return {
+      size: nextSize,
+      entryPrice: price,
+      leverage: leverage(),
+      marginType: marginType(),
+      collateral: collateral(),
+    };
+  });
+
+  const previewSpotCollateral = createMemo(() => {
+    if (!isPortfolioMarginEnabled()) return 0;
+    const position = previewPosition();
+    if (!position || position.size >= 0) return 0;
+    const existing = currentPosition();
+    if (signedOrderSize() === 0 && existing?.spotCollateralSize != null) {
+      return existing.spotCollateralSize ?? 0;
+    }
+    const balance = spotBalanceForSymbol();
+    return Math.min(balance, Math.abs(position.size));
+  });
+
+  const previewUnhedgedSize = createMemo(() => {
+    const position = previewPosition();
+    if (!position) return 0;
+    return Math.max(0, Math.abs(position.size) - previewSpotCollateral());
+  });
+
+  const realizedPnlDelta = createMemo(() => {
+    const position = currentPosition();
+    const signedSize = signedOrderSize();
+    if (!position || signedSize === 0) return 0;
+    const price = orderPrice();
+    if (!Number.isFinite(price) || price <= 0) return 0;
+    const sameDirection =
+      Math.sign(position.size) === Math.sign(signedSize) || signedSize === 0;
+    if (sameDirection) return 0;
+    const closedSize = Math.min(Math.abs(position.size), Math.abs(signedSize));
+    if (closedSize <= 0) return 0;
+    return position.size > 0
+      ? (price - position.entryPrice) * closedSize
+      : (position.entryPrice - price) * closedSize;
+  });
+
+  const baseEquity = createMemo(() => {
+    const position = previewPosition();
+    const col = position?.collateral ?? collateral();
+    const totalUnrealized = unrealizedByCollateral()[col] ?? 0;
+    return (
+      getBalance(col) +
+      (totalUnrealized - currentPositionUnrealized()) +
+      realizedPnlDelta()
+    );
+  });
+
+  const isLiquidationHedged = createMemo(() => {
+    const position = previewPosition();
+    if (!position || position.size >= 0) return false;
+    return previewSpotCollateral() > 0 && previewUnhedgedSize() <= 0;
+  });
+
   const liquidationPreview = createMemo(() => {
     if (isSpot()) return "--";
-    // Fully hedged positions have no liquidation
-    if (isFullyHedgedPreview()) return "None";
-    const price = orderPrice();
-    if (!Number.isFinite(price) || price <= 0 || effectiveLeverage() <= 0) {
-      return "--";
+    const position = previewPosition();
+    if (!position || position.size === 0) return "--";
+    const entryPrice = position.entryPrice;
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0) return "--";
+    if (isLiquidationHedged()) return "None";
+
+    const isShort = position.size < 0;
+    if (position.marginType === "isolated") {
+      if (!Number.isFinite(position.leverage) || position.leverage <= 0) {
+        return "--";
+      }
+      const liqFactor = 1 / position.leverage;
+      const liq = isShort
+        ? entryPrice * (1 + liqFactor)
+        : entryPrice * (1 - liqFactor);
+      return liq > 0 ? liq.toFixed(3) : "--";
     }
-    const factor = 1 / effectiveLeverage();
-    const liq = isLong() ? price * (1 - factor) : price * (1 + factor);
-    return liq > 0 ? liq.toFixed(3) : "--";
+
+    const equity = baseEquity();
+    const denom = isShort ? previewUnhedgedSize() : Math.abs(position.size);
+    if (!Number.isFinite(equity) || denom <= 0) return "--";
+    const liq = isShort
+      ? entryPrice + equity / denom
+      : entryPrice - equity / denom;
+    return Number.isFinite(liq) && liq > 0 ? liq.toFixed(3) : "--";
   });
   const reduceOnlyError = createMemo(() => {
     if (!canReduceOnly() || !reduceOnly()) return "";
@@ -168,6 +424,23 @@ const OrderForm: Component = () => {
     }
     return !reduceOnlyError();
   });
+
+  const insufficientMargin = createMemo(() => {
+    if (isSpot()) return false;
+    if (!isOrderValid()) return false;
+    const balance = getBalance(collateral());
+    const nextUsed = nextMarginUsed();
+    const currentUsed = currentMarginUsed();
+    if (!Number.isFinite(balance)) return false;
+    if (!Number.isFinite(nextUsed) || !Number.isFinite(currentUsed)) {
+      return false;
+    }
+    return nextUsed > balance && nextUsed >= currentUsed;
+  });
+
+  const canSubmitOrder = createMemo(
+    () => isOrderValid() && !insufficientMargin(),
+  );
 
   const formatUsd = (value: number) => {
     if (!Number.isFinite(value)) return "--";
@@ -333,6 +606,17 @@ const OrderForm: Component = () => {
   });
 
   createEffect(() => {
+    if (isSpot()) return;
+    const max = maxLeverage();
+    if (!Number.isFinite(max) || max <= 0) return;
+    setLeverage((current) => {
+      const next = current > max ? max : current;
+      if (next > 0) return next;
+      return Math.min(DEFAULT_LEVERAGE, max);
+    });
+  });
+
+  createEffect(() => {
     if (!isSpot()) {
       setSpotError("");
     }
@@ -441,7 +725,7 @@ const OrderForm: Component = () => {
             <Show when={leverageMenuOpen()}>
               <div class="rounded-xl border border-brand-border bg-brand-surface p-2">
                 <div class="grid grid-cols-5 gap-2">
-                  {leverageOptions.map((option) => (
+                  {leverageOptions().map((option) => (
                     <button
                       class={`rounded-md border px-2 py-1 text-xs ${
                         leverage() === option
@@ -493,12 +777,15 @@ const OrderForm: Component = () => {
                           : "border-brand-border hover:border-brand-slate-400"
                       }`}
                       onClick={() => {
-                        if (isPortfolioMarginEnabled()) handleToggleMarginMode();
+                        if (isPortfolioMarginEnabled())
+                          handleToggleMarginMode();
                       }}
                       disabled={marginModeLoading()}
                     >
                       <div class="flex items-center justify-between">
-                        <span class="font-semibold text-slate-100">Classic</span>
+                        <span class="font-semibold text-slate-100">
+                          Classic
+                        </span>
                         <Show when={!isPortfolioMarginEnabled()}>
                           <span class="text-xs px-2 py-0.5 rounded-full bg-brand-accent/20 text-brand-accent">
                             Active
@@ -506,7 +793,8 @@ const OrderForm: Component = () => {
                         </Show>
                       </div>
                       <p class="mt-1 text-sm text-brand-slate-400">
-                        Standard margin mode. All perp positions are collateralized with USDC only.
+                        Standard margin mode. All perp positions are
+                        collateralized with USDC only.
                       </p>
                     </button>
 
@@ -518,12 +806,15 @@ const OrderForm: Component = () => {
                           : "border-brand-border hover:border-brand-slate-400"
                       }`}
                       onClick={() => {
-                        if (!isPortfolioMarginEnabled()) handleToggleMarginMode();
+                        if (!isPortfolioMarginEnabled())
+                          handleToggleMarginMode();
                       }}
                       disabled={marginModeLoading()}
                     >
                       <div class="flex items-center justify-between">
-                        <span class="font-semibold text-slate-100">Portfolio Margin</span>
+                        <span class="font-semibold text-slate-100">
+                          Portfolio Margin
+                        </span>
                         <Show when={isPortfolioMarginEnabled()}>
                           <span class="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
                             Active
@@ -531,7 +822,8 @@ const OrderForm: Component = () => {
                         </Show>
                       </div>
                       <p class="mt-1 text-sm text-brand-slate-400">
-                        Spot holdings collateralize short perps, reducing liquidation risk.
+                        Spot holdings collateralize short perps, reducing
+                        liquidation risk.
                       </p>
                     </button>
 
@@ -837,8 +1129,10 @@ const OrderForm: Component = () => {
             <div class="text-xs text-emerald-300/80 space-y-1">
               <Show when={isFullyHedgedPreview()}>
                 <p>
-                  <span class="font-semibold">{spotCollateralAmount().toFixed(4)} {currentSymbol()}</span> spot
-                  will collateralize this short position.
+                  <span class="font-semibold">
+                    {spotCollateralAmount().toFixed(4)} {currentSymbol()}
+                  </span>{" "}
+                  spot will collateralize this short position.
                 </p>
                 <p class="text-emerald-400 font-medium">
                   Delta neutral - No liquidation risk
@@ -846,11 +1140,18 @@ const OrderForm: Component = () => {
               </Show>
               <Show when={!isFullyHedgedPreview()}>
                 <p>
-                  <span class="font-semibold">{spotCollateralAmount().toFixed(4)} {currentSymbol()}</span> spot
-                  collateral + <span class="font-semibold">{formatUsd(marginRequired())}</span> USDC margin
+                  <span class="font-semibold">
+                    {spotCollateralAmount().toFixed(4)} {currentSymbol()}
+                  </span>{" "}
+                  spot collateral +{" "}
+                  <span class="font-semibold">
+                    {formatUsd(marginRequired())}
+                  </span>{" "}
+                  USDC margin
                 </p>
                 <p>
-                  Hedged: {spotCollateralAmount().toFixed(4)} / Unhedged: {unhedgedSize().toFixed(4)} {currentSymbol()}
+                  Hedged: {spotCollateralAmount().toFixed(4)} / Unhedged:{" "}
+                  {unhedgedSize().toFixed(4)} {currentSymbol()}
                 </p>
               </Show>
             </div>
@@ -880,7 +1181,9 @@ const OrderForm: Component = () => {
               <span class="text-brand-slate-500 underline underline-offset-2 decoration-dashed decoration-brand-slate-500">
                 Liquidation Price
               </span>
-              <span class={`font-mono ${isFullyHedgedPreview() ? "text-emerald-400 font-medium" : "text-slate-100"}`}>
+              <span
+                class={`font-mono ${isLiquidationHedged() ? "text-emerald-400 font-medium" : "text-slate-100"}`}
+              >
                 {liquidationPreview()}
               </span>
             </div>
@@ -893,7 +1196,9 @@ const OrderForm: Component = () => {
             <div class="flex justify-between">
               <span class="text-brand-slate-500">Margin Required</span>
               <span class="text-slate-100 font-mono">
-                <Show when={willUseSpotCollateral() && spotCollateralAmount() > 0}>
+                <Show
+                  when={willUseSpotCollateral() && spotCollateralAmount() > 0}
+                >
                   <span class="text-emerald-400 text-xs mr-1">
                     ({spotCollateralAmount().toFixed(2)} {currentSymbol()} spot)
                   </span>
@@ -913,23 +1218,21 @@ const OrderForm: Component = () => {
               <span class="text-brand-slate-500 underline underline-offset-2 decoration-dashed decoration-brand-slate-500">
                 Fees
               </span>
-              <span class="font-mono text-brand-accent">
-                0% / 0%
-              </span>
+              <span class="font-mono text-brand-accent">0% / 0%</span>
             </div>
           </div>
         </Show>
 
         <button
           class={`w-full rounded-xl py-3 text-sm font-semibold transition-colors ${
-            isOrderValid()
+            canSubmitOrder()
               ? "bg-brand-accent text-brand-screen hover:brightness-105"
               : "bg-brand-border text-brand-slate-500 cursor-not-allowed"
           }`}
           onClick={submitOrder}
-          disabled={!isOrderValid()}
+          disabled={!canSubmitOrder()}
         >
-          Place Order
+          {insufficientMargin() ? "Not enough margin" : "Place Order"}
         </button>
       </div>
 
