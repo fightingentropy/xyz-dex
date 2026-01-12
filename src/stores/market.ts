@@ -1,12 +1,38 @@
-import { createSignal, createEffect, onCleanup } from "solid-js";
+import {
+  batch,
+  createEffect,
+  createMemo,
+  createRoot,
+  createSignal,
+  onCleanup,
+  untrack,
+} from "solid-js";
+import { api } from "../../convex/_generated/api";
+import { createConvexQuery } from "../lib/convex";
+import { isAuthenticated } from "./auth";
 import {
   fetchMetaAndAssetCtxs,
   fetchSpotMetaAndAssetCtxs,
   getAssetContext,
   formatPrice,
+  formatVolume,
   normalizeSymbol,
   type MetaAndAssetCtxs,
+  type SpotMetaAndAssetCtxs,
 } from "../lib/hyperliquid";
+import {
+  fetchFuturesTicker,
+  fetchOpenInterest,
+  fetchPremiumIndex,
+  fetchSpotTicker,
+  toBinanceSymbol,
+} from "../lib/binance";
+import {
+  fetchLighterFundingRates,
+  fetchLighterOrderBookDetails,
+  getLighterMarketId,
+  normalizeLighterSymbol,
+} from "../lib/lighter";
 
 export interface Market {
   symbol: string;
@@ -42,6 +68,60 @@ const saveWatchlist = (watchlist: Set<string>) => {
 
 const watchlistSet = loadWatchlist();
 
+const safeNormalizeSymbol = (value?: string | null): string | null => {
+  if (!value) return null;
+  const normalized = normalizeSymbol(value);
+  return normalized || null;
+};
+
+const { trackedPerps, trackedSpots } = createRoot(() => {
+  const positionsQuery = createConvexQuery(
+    api.orders.listPositions,
+    () => (isAuthenticated() ? {} : null),
+    [],
+  );
+  const spotBalancesQuery = createConvexQuery(
+    api.spot.listSpotBalances,
+    () => (isAuthenticated() ? {} : null),
+    [],
+  );
+
+  const trackedPerps = createMemo(() => {
+    const next = new Set<string>();
+    const positions = positionsQuery() ?? [];
+    for (const position of positions) {
+      if (!position) continue;
+      if (!Number.isFinite(position.size) || position.size === 0) continue;
+      const normalized = safeNormalizeSymbol(position.symbol);
+      if (normalized) next.add(normalized);
+    }
+    return [...next];
+  });
+
+  const trackedSpots = createMemo(() => {
+    const next = new Set<string>();
+    const balances = spotBalancesQuery() ?? [];
+    for (const balance of balances) {
+      if (!balance) continue;
+      if (!Number.isFinite(balance.balance) || balance.balance <= 0) continue;
+      if (!balance.asset || balance.asset === "USDC") continue;
+      const normalized = safeNormalizeSymbol(balance.asset);
+      if (normalized && normalized !== "USDC") {
+        next.add(normalized);
+      }
+    }
+    return [...next];
+  });
+
+  return { trackedPerps, trackedSpots };
+});
+
+const trackedAssetsKey = createMemo(() => {
+  const perps = [...trackedPerps()].sort();
+  const spots = [...trackedSpots()].sort();
+  return `${perps.join(",")}|${spots.join(",")}`;
+});
+
 // Reactive markets store
 const [markets, setMarkets] = createSignal<Market[]>([]);
 const [marketsLoading, setMarketsLoading] = createSignal(true);
@@ -71,7 +151,7 @@ export const toggleWatchlist = (symbol: string) => {
 const SETTINGS_KEY = "trade-xyz-settings";
 const LAST_SYMBOL_KEY = "trade-xyz-last-symbol";
 const DEFAULT_SYMBOL = "HYPE";
-export type DataProvider = "hyperliquid" | "binance";
+export type DataProvider = "hyperliquid" | "binance" | "lighter";
 const DEFAULT_DATA_PROVIDER: DataProvider = "hyperliquid";
 
 interface Settings {
@@ -86,7 +166,8 @@ const loadSettings = (): Settings => {
       const parsed = JSON.parse(stored) as Partial<Settings>;
       const dataProvider =
         parsed.dataProvider === "binance" ||
-        parsed.dataProvider === "hyperliquid"
+        parsed.dataProvider === "hyperliquid" ||
+        parsed.dataProvider === "lighter"
           ? parsed.dataProvider
           : DEFAULT_DATA_PROVIDER;
       return {
@@ -256,6 +337,95 @@ export const TICKER_DATA = () => {
   }));
 };
 
+const DEFAULT_PERPS_LEVERAGE = "10x";
+const DEFAULT_SPOT_LEVERAGE = "1x";
+const BASELINE_PERPS = ["BTC", "ETH", "SOL", "ZEC"];
+
+const formatPriceValue = (value: number): string => {
+  if (!Number.isFinite(value) || value <= 0) return "--";
+  return formatPriceStr(value);
+};
+
+const formatFundingRateValue = (value: number): string => {
+  if (!Number.isFinite(value)) return "--";
+  const sign = value >= 0 ? "+" : "";
+  return `${sign}${value.toFixed(4)}%`;
+};
+
+const formatUsdValue = (value: number): string => {
+  if (!Number.isFinite(value)) return "--";
+  return formatVolume(value);
+};
+
+const syncCurrentMarket = (nextMarkets: Market[]): Market | null => {
+  if (nextMarkets.length === 0) return null;
+  const symbol = currentSymbol();
+  const preferredType = currentMarketType();
+  let match =
+    nextMarkets.find(
+      (market) => market.symbol === symbol && market.type === preferredType,
+    ) ?? nextMarkets.find((market) => market.symbol === symbol);
+
+  if (!match) {
+    match = nextMarkets[0];
+    if (!match) return null;
+    setCurrentSymbolInternal(match.symbol);
+    saveLastSymbol(match.symbol);
+  }
+
+  batch(() => {
+    setCurrentMarket(match!.name);
+    setCurrentMarketTypeInternal(match!.type);
+    setCurrentMarketLeverageInternal(match!.leverage);
+  });
+
+  return match;
+};
+
+const updateCurrentStatsFromMarket = (market: Market | null) => {
+  if (!market) return;
+  batch(() => {
+    setMarkPrice(market.price || "--");
+    setOraclePrice(market.price || "--");
+    setChange24h(Number.isFinite(market.change24h) ? market.change24h : 0);
+    setVolume24h(formatUsdValue(market.volume24h));
+
+    if (market.type === "spot") {
+      setOpenInterest("--");
+      setFundingRate("--");
+    } else {
+      setOpenInterest(formatUsdValue(market.openInterest));
+      setFundingRate(formatFundingRateValue(market.funding));
+    }
+  });
+
+  document.title = `${market.price || "--"} | ${market.symbol} | Trade XYZ`;
+};
+
+const getTrackedAssets = (provider: DataProvider) => {
+  const perps = new Set(trackedPerps());
+  const spots = new Set(trackedSpots());
+
+  BASELINE_PERPS.forEach((symbol) => perps.add(symbol));
+
+  if (perps.size === 0 && spots.size === 0) {
+    watchlistSet.forEach((symbol) => perps.add(symbol));
+    if (perps.size === 0) {
+      const fallback = untrack(() => currentSymbol());
+      if (fallback) perps.add(fallback);
+    }
+  }
+
+  if (provider !== "hyperliquid") {
+    spots.delete("HYPE");
+  }
+
+  return {
+    perps: [...perps],
+    spots: [...spots],
+  };
+};
+
 /**
  * Update the current symbol's live price display from MetaAndAssetCtxs data
  */
@@ -337,6 +507,56 @@ const updateCurrentSymbolPrices = (
   }
 };
 
+const updateCurrentSpotPrices = (
+  coin: string,
+  spotData: SpotMetaAndAssetCtxs,
+) => {
+  const normalized = normalizeSymbol(coin);
+  const tokenMap = new Map<number, string>();
+  spotData.meta.tokens.forEach((token) => {
+    tokenMap.set(token.index, token.name);
+  });
+
+  const pair = spotData.meta.universe.find((entry) => {
+    const base = tokenMap.get(entry.tokens[0]);
+    const quote = tokenMap.get(entry.tokens[1]);
+    return base?.toUpperCase() === normalized && quote === "USDC";
+  });
+
+  if (!pair) return;
+  const ctx = spotData.ctx[pair.index];
+  if (!ctx) return;
+
+  const markSource = ctx.markPx ?? ctx.midPx;
+  const markNumber = markSource ? Number(markSource) : NaN;
+  if (markSource) {
+    const formatted = formatPrice(markSource);
+    setMarkPrice(formatted);
+    setOraclePrice(formatted);
+    document.title = `${formatted} | ${normalized} | Trade XYZ`;
+  }
+
+  if (ctx.prevDayPx && markNumber) {
+    const prevDayPrice = Number(ctx.prevDayPx);
+    if (Number.isFinite(prevDayPrice) && prevDayPrice > 0) {
+      const change = ((markNumber - prevDayPrice) / prevDayPrice) * 100;
+      if (Number.isFinite(change)) {
+        setChange24h(change);
+      }
+    }
+  }
+
+  if (ctx.dayNtlVlm != null) {
+    const vol = Number(ctx.dayNtlVlm);
+    if (Number.isFinite(vol)) {
+      setVolume24h(formatVolume(vol));
+    }
+  }
+
+  setOpenInterest("--");
+  setFundingRate("--");
+};
+
 /**
  * Fetch and update all markets AND the current symbol's prices from a single API call.
  * This consolidates what was previously two separate polling loops.
@@ -354,106 +574,398 @@ const formatPriceStr = (price: number): string => {
   }
 };
 
+const parseNumber = (value: string | number | null | undefined): number => {
+  if (value == null) return NaN;
+  const parsed =
+    typeof value === "number"
+      ? value
+      : Number(String(value).replace(/,/g, "").trim());
+  return Number.isFinite(parsed) ? parsed : NaN;
+};
+
+const formatLighterLeverage = (fraction?: number): string => {
+  const parsed = parseNumber(fraction ?? null);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PERPS_LEVERAGE;
+  const leverage = Math.max(1, Math.floor(10000 / parsed));
+  return `${leverage}x`;
+};
+
+const buildHyperliquidMarkets = async (
+  tracked: { perps: string[]; spots: string[] },
+  signal?: AbortSignal,
+): Promise<{
+  markets: Market[];
+  metaAndCtxs: MetaAndAssetCtxs | null;
+  spotData: SpotMetaAndAssetCtxs | null;
+}> => {
+  const perpsSet = new Set(tracked.perps);
+  const spotsSet = new Set(tracked.spots);
+
+  const [metaAndCtxs, spotData] = await Promise.all([
+    perpsSet.size > 0 ? fetchMetaAndAssetCtxs(signal) : Promise.resolve(null),
+    spotsSet.size > 0
+      ? fetchSpotMetaAndAssetCtxs(signal)
+      : Promise.resolve(null),
+  ]);
+
+  const newMarkets: Market[] = [];
+
+  if (metaAndCtxs) {
+    metaAndCtxs.universe.forEach((asset, index) => {
+      if (!perpsSet.has(asset.name)) return;
+      const ctx = metaAndCtxs.ctx[index];
+      if (!ctx) return;
+
+      const markPriceVal = parseNumber(ctx.markPx ?? ctx.midPx);
+      const markPrice = Number.isFinite(markPriceVal) ? markPriceVal : 0;
+      const prevDayPrice = parseNumber(ctx.prevDayPx);
+      const change24hVal =
+        Number.isFinite(prevDayPrice) &&
+        prevDayPrice > 0 &&
+        Number.isFinite(markPriceVal)
+          ? ((markPriceVal - prevDayPrice) / prevDayPrice) * 100
+          : 0;
+      const volumeRaw = parseNumber(ctx.dayNtlVlm);
+      const volume24hVal = Number.isFinite(volumeRaw) ? volumeRaw : 0;
+      const oiBase = parseNumber(ctx.openInterest);
+      const openInterestVal = Number.isFinite(oiBase)
+        ? Number.isFinite(markPriceVal)
+          ? oiBase * markPriceVal
+          : oiBase
+        : 0;
+      const fundingRaw = parseNumber(ctx.funding);
+      const fundingVal = Number.isFinite(fundingRaw) ? fundingRaw * 100 : 0;
+
+      newMarkets.push({
+        symbol: asset.name,
+        name: `${asset.name}-USDC`,
+        price: formatPriceValue(markPriceVal),
+        change24h: change24hVal,
+        volume24h: volume24hVal,
+        openInterest: openInterestVal,
+        funding: fundingVal,
+        type: "perps",
+        leverage: `${asset.maxLeverage}x`,
+        watchlist: watchlistSet.has(asset.name),
+      });
+    });
+  }
+
+  if (spotData) {
+    const tokenMap = new Map<number, string>();
+    spotData.meta.tokens.forEach((token) => {
+      tokenMap.set(token.index, token.name);
+    });
+
+    spotData.meta.universe.forEach((pair) => {
+      const ctx = spotData.ctx[pair.index];
+      if (!ctx) return;
+
+      const baseToken = tokenMap.get(pair.tokens[0]);
+      const quoteToken = tokenMap.get(pair.tokens[1]);
+      if (!baseToken || !quoteToken) return;
+      if (quoteToken !== "USDC") return;
+      if (!spotsSet.has(baseToken)) return;
+
+      const markPriceVal = parseNumber(ctx.markPx ?? ctx.midPx);
+      const prevDayPrice = parseNumber(ctx.prevDayPx);
+      const change24hVal =
+        Number.isFinite(prevDayPrice) &&
+        prevDayPrice > 0 &&
+        Number.isFinite(markPriceVal)
+          ? ((markPriceVal - prevDayPrice) / prevDayPrice) * 100
+          : 0;
+      const volumeRaw = parseNumber(ctx.dayNtlVlm);
+      const volume24hVal = Number.isFinite(volumeRaw) ? volumeRaw : 0;
+
+      newMarkets.push({
+        symbol: baseToken,
+        name: `${baseToken}-USDC`,
+        price: formatPriceValue(markPriceVal),
+        change24h: change24hVal,
+        volume24h: volume24hVal,
+        openInterest: 0,
+        funding: 0,
+        type: "spot",
+        leverage: DEFAULT_SPOT_LEVERAGE,
+        watchlist: watchlistSet.has(baseToken),
+      });
+    });
+  }
+
+  return { markets: newMarkets, metaAndCtxs, spotData };
+};
+
+const fetchBinancePerpMarket = async (
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<Market | null> => {
+  const marketSymbol = toBinanceSymbol(symbol, "USDT");
+  try {
+    const [ticker, premium, openInterest] = await Promise.all([
+      fetchFuturesTicker({ symbol: marketSymbol, signal }),
+      fetchPremiumIndex({ symbol: marketSymbol, signal }),
+      fetchOpenInterest({ symbol: marketSymbol, signal }),
+    ]);
+
+    const markPriceVal = parseNumber(premium?.markPrice ?? ticker?.lastPrice);
+    const lastPriceVal = parseNumber(ticker?.lastPrice);
+    const priceVal = Number.isFinite(markPriceVal)
+      ? markPriceVal
+      : lastPriceVal;
+    const changeRaw = parseNumber(ticker?.priceChangePercent);
+    const volumeRaw = parseNumber(ticker?.quoteVolume);
+    const oiBase = parseNumber(openInterest?.openInterest);
+    const openInterestVal = Number.isFinite(oiBase)
+      ? Number.isFinite(priceVal)
+        ? oiBase * priceVal
+        : oiBase
+      : 0;
+    const fundingRaw = parseNumber(premium?.lastFundingRate);
+
+    return {
+      symbol,
+      name: `${symbol}-USDT`,
+      price: formatPriceValue(priceVal),
+      change24h: Number.isFinite(changeRaw) ? changeRaw : 0,
+      volume24h: Number.isFinite(volumeRaw) ? volumeRaw : 0,
+      openInterest: openInterestVal,
+      funding: Number.isFinite(fundingRaw) ? fundingRaw * 100 : 0,
+      type: "perps",
+      leverage: DEFAULT_PERPS_LEVERAGE,
+      watchlist: watchlistSet.has(symbol),
+    };
+  } catch (error) {
+    if (signal?.aborted) return null;
+    console.warn(`Binance perp market failed: ${symbol}`, error);
+    return null;
+  }
+};
+
+const fetchBinanceSpotMarket = async (
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<Market | null> => {
+  const marketSymbol = toBinanceSymbol(symbol, "USDT");
+  try {
+    const ticker = await fetchSpotTicker({ symbol: marketSymbol, signal });
+    const lastPriceVal = parseNumber(ticker?.lastPrice);
+    const changeRaw = parseNumber(ticker?.priceChangePercent);
+    const volumeRaw = parseNumber(ticker?.quoteVolume);
+
+    return {
+      symbol,
+      name: `${symbol}-USDT`,
+      price: formatPriceValue(lastPriceVal),
+      change24h: Number.isFinite(changeRaw) ? changeRaw : 0,
+      volume24h: Number.isFinite(volumeRaw) ? volumeRaw : 0,
+      openInterest: 0,
+      funding: 0,
+      type: "spot",
+      leverage: DEFAULT_SPOT_LEVERAGE,
+      watchlist: watchlistSet.has(symbol),
+    };
+  } catch (error) {
+    if (signal?.aborted) return null;
+    console.warn(`Binance spot market failed: ${symbol}`, error);
+    return null;
+  }
+};
+
+const buildBinanceMarkets = async (
+  tracked: { perps: string[]; spots: string[] },
+  signal?: AbortSignal,
+): Promise<Market[]> => {
+  const perpsSymbols = [...new Set(tracked.perps)];
+  const spotSymbols = [...new Set(tracked.spots)];
+
+  const [perpsMarkets, spotMarkets] = await Promise.all([
+    Promise.all(
+      perpsSymbols.map((symbol) => fetchBinancePerpMarket(symbol, signal)),
+    ),
+    Promise.all(
+      spotSymbols.map((symbol) => fetchBinanceSpotMarket(symbol, signal)),
+    ),
+  ]);
+
+  return [...perpsMarkets, ...spotMarkets].filter((market): market is Market =>
+    Boolean(market),
+  );
+};
+
+const fetchLighterPerpMarket = async (
+  symbol: string,
+  fundingRates: Map<number, number>,
+  signal?: AbortSignal,
+): Promise<Market | null> => {
+  const marketId = await getLighterMarketId(symbol, "perps");
+  if (marketId == null) return null;
+  try {
+    const detail = await fetchLighterOrderBookDetails({ marketId, signal });
+    if (!detail) return null;
+    const baseSymbol =
+      normalizeLighterSymbol(detail.symbol || symbol) || symbol;
+
+    const priceVal = parseNumber(detail.last_trade_price);
+    const changeRaw = parseNumber(detail.daily_price_change);
+    const volumeRaw = parseNumber(detail.daily_quote_token_volume);
+    const oiBase = parseNumber(detail.open_interest);
+    const openInterestVal = Number.isFinite(oiBase)
+      ? Number.isFinite(priceVal)
+        ? oiBase * priceVal
+        : oiBase
+      : 0;
+    const fundingRaw = fundingRates.get(marketId) ?? 0;
+
+    return {
+      symbol: baseSymbol,
+      name: `${baseSymbol}-USDC`,
+      price: formatPriceValue(priceVal),
+      change24h: Number.isFinite(changeRaw) ? changeRaw : 0,
+      volume24h: Number.isFinite(volumeRaw) ? volumeRaw : 0,
+      openInterest: openInterestVal,
+      funding: Number.isFinite(fundingRaw) ? fundingRaw * 100 : 0,
+      type: "perps",
+      leverage: formatLighterLeverage(detail.default_initial_margin_fraction),
+      watchlist: watchlistSet.has(baseSymbol),
+    };
+  } catch (error) {
+    if (signal?.aborted) return null;
+    console.warn(`Lighter perp market failed: ${symbol}`, error);
+    return null;
+  }
+};
+
+const fetchLighterSpotMarket = async (
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<Market | null> => {
+  const marketId = await getLighterMarketId(symbol, "spot");
+  if (marketId == null) return null;
+  try {
+    const detail = await fetchLighterOrderBookDetails({ marketId, signal });
+    if (!detail) return null;
+    const baseSymbol =
+      normalizeLighterSymbol(detail.symbol || symbol) || symbol;
+
+    const priceVal = parseNumber(detail.last_trade_price);
+    const changeRaw = parseNumber(detail.daily_price_change);
+    const volumeRaw = parseNumber(detail.daily_quote_token_volume);
+
+    return {
+      symbol: baseSymbol,
+      name: `${baseSymbol}-USDC`,
+      price: formatPriceValue(priceVal),
+      change24h: Number.isFinite(changeRaw) ? changeRaw : 0,
+      volume24h: Number.isFinite(volumeRaw) ? volumeRaw : 0,
+      openInterest: 0,
+      funding: 0,
+      type: "spot",
+      leverage: DEFAULT_SPOT_LEVERAGE,
+      watchlist: watchlistSet.has(baseSymbol),
+    };
+  } catch (error) {
+    if (signal?.aborted) return null;
+    console.warn(`Lighter spot market failed: ${symbol}`, error);
+    return null;
+  }
+};
+
+const buildLighterMarkets = async (
+  tracked: { perps: string[]; spots: string[] },
+  signal?: AbortSignal,
+): Promise<Market[]> => {
+  const perpsSymbols = [...new Set(tracked.perps)];
+  const spotSymbols = [...new Set(tracked.spots)];
+  const fundingRates = new Map<number, number>();
+
+  if (perpsSymbols.length > 0) {
+    try {
+      const rates = await fetchLighterFundingRates(signal);
+      rates
+        .filter((rate) => rate.exchange === "lighter")
+        .forEach((rate) => {
+          const parsed = parseNumber(rate.rate);
+          if (Number.isFinite(parsed)) {
+            fundingRates.set(rate.market_id, parsed);
+          }
+        });
+    } catch (error) {
+      if (signal?.aborted) return [];
+      console.warn("Lighter funding rates failed:", error);
+    }
+  }
+
+  const [perpsMarkets, spotMarkets] = await Promise.all([
+    Promise.all(
+      perpsSymbols.map((symbol) =>
+        fetchLighterPerpMarket(symbol, fundingRates, signal),
+      ),
+    ),
+    Promise.all(
+      spotSymbols.map((symbol) => fetchLighterSpotMarket(symbol, signal)),
+    ),
+  ]);
+
+  return [...perpsMarkets, ...spotMarkets].filter((market): market is Market =>
+    Boolean(market),
+  );
+};
+
 const fetchAndUpdateAll = async (
   signal?: AbortSignal,
   updateLivePrices = true,
 ): Promise<void> => {
+  const provider = dataProvider();
+  const trackedAssets = getTrackedAssets(provider);
+
   try {
-    // Fetch perps and spot data in parallel
-    const [metaAndCtxs, spotData] = await Promise.all([
-      fetchMetaAndAssetCtxs(signal),
-      fetchSpotMetaAndAssetCtxs(signal),
-    ]);
+    let newMarkets: Market[] = [];
+    let metaAndCtxs: MetaAndAssetCtxs | null = null;
+    let spotData: SpotMetaAndAssetCtxs | null = null;
+
+    if (provider === "hyperliquid") {
+      const result = await buildHyperliquidMarkets(trackedAssets, signal);
+      newMarkets = result.markets;
+      metaAndCtxs = result.metaAndCtxs;
+      spotData = result.spotData;
+    } else if (provider === "binance") {
+      newMarkets = await buildBinanceMarkets(trackedAssets, signal);
+    } else {
+      newMarkets = await buildLighterMarkets(trackedAssets, signal);
+    }
 
     if (signal?.aborted) return;
 
-    const newMarkets: Market[] = [];
-
-    // Add perps markets
-    if (metaAndCtxs) {
-      metaAndCtxs.universe.forEach((asset, index) => {
-        const ctx = metaAndCtxs.ctx[index];
-        if (!ctx) return;
-
-        const markPriceVal = Number(ctx.markPx || ctx.midPx || 0);
-        const prevDayPrice = Number(ctx.prevDayPx || 0);
-        const change24hVal =
-          prevDayPrice > 0
-            ? ((markPriceVal - prevDayPrice) / prevDayPrice) * 100
-            : 0;
-        const volume24hVal = Number(ctx.dayNtlVlm || 0);
-        const openInterestVal = Number(ctx.openInterest || 0) * markPriceVal;
-        const fundingVal = Number(ctx.funding || 0) * 100;
-
-        newMarkets.push({
-          symbol: asset.name,
-          name: `${asset.name}-USDC`,
-          price: formatPriceStr(markPriceVal),
-          change24h: change24hVal,
-          volume24h: volume24hVal,
-          openInterest: openInterestVal,
-          funding: fundingVal,
-          type: "perps",
-          leverage: `${asset.maxLeverage}x`,
-          watchlist: watchlistSet.has(asset.name),
-        });
-      });
-    }
-
-    // Add spot markets
-    if (spotData) {
-      const tokenMap = new Map<number, string>();
-      spotData.meta.tokens.forEach((token) => {
-        tokenMap.set(token.index, token.name);
-      });
-
-      spotData.meta.universe.forEach((pair) => {
-        // Use pair.index to look up the correct context (not iteration index)
-        const ctx = spotData.ctx[pair.index];
-        if (!ctx) return;
-
-        // Get base token name (first token in pair)
-        const baseToken = tokenMap.get(pair.tokens[0]);
-        const quoteToken = tokenMap.get(pair.tokens[1]);
-        if (!baseToken || !quoteToken) return;
-
-        // Skip non-USDC pairs for now
-        if (quoteToken !== "USDC") return;
-
-        const markPriceVal = Number(ctx.markPx || ctx.midPx || 0);
-        const prevDayPrice = Number(ctx.prevDayPx || 0);
-        const change24hVal =
-          prevDayPrice > 0
-            ? ((markPriceVal - prevDayPrice) / prevDayPrice) * 100
-            : 0;
-        const volume24hVal = Number(ctx.dayNtlVlm || 0);
-
-        newMarkets.push({
-          symbol: baseToken,
-          name: `${baseToken}-USDC`,
-          price: formatPriceStr(markPriceVal),
-          change24h: change24hVal,
-          volume24h: volume24hVal,
-          openInterest: 0,
-          funding: 0,
-          type: "spot",
-          leverage: "1x",
-          watchlist: watchlistSet.has(baseToken),
-        });
-      });
-    }
-
-    // Sort by volume by default
     newMarkets.sort((a, b) => b.volume24h - a.volume24h);
 
     setMarkets(newMarkets);
     setMarketsLoading(false);
 
-    // Also update the current symbol's live prices from the same data
-    if (updateLivePrices && metaAndCtxs) {
-      const coin = currentSymbol();
-      updateCurrentSymbolPrices(coin, metaAndCtxs);
+    const selected = syncCurrentMarket(newMarkets);
+
+    if (!updateLivePrices) return;
+
+    if (provider === "hyperliquid") {
+      const coin = selected?.symbol ?? currentSymbol();
+      const marketType = selected?.type ?? currentMarketType();
+      if (marketType === "spot") {
+        if (spotData) {
+          updateCurrentSpotPrices(coin, spotData);
+        } else {
+          updateCurrentStatsFromMarket(selected);
+        }
+      } else {
+        if (metaAndCtxs) {
+          updateCurrentSymbolPrices(coin, metaAndCtxs);
+        } else {
+          updateCurrentStatsFromMarket(selected);
+        }
+      }
+      return;
     }
+
+    updateCurrentStatsFromMarket(selected);
   } catch (e) {
     if (signal?.aborted) return;
     console.error("Failed to fetch markets:", e);
@@ -498,6 +1010,8 @@ export const useLivePrices = (options?: { enabled?: () => boolean }) => {
     const enabled = isEnabled();
     // Track currentSymbol to trigger re-fetch on symbol change
     currentSymbol();
+    dataProvider();
+    trackedAssetsKey();
 
     // Clear previous timer
     if (timer) {

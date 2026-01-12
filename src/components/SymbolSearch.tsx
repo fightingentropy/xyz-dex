@@ -66,14 +66,26 @@ const ChevronDownIcon: Component<{ class?: string }> = (props) => (
 );
 
 const TrendingUpIcon: Component<{ class?: string }> = (props) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class={props.class ?? "w-3.5 h-3.5"}>
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    class={props.class ?? "w-3.5 h-3.5"}
+  >
     <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
     <polyline points="17 6 23 6 23 12" />
   </svg>
 );
 
 const TrendingDownIcon: Component<{ class?: string }> = (props) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class={props.class ?? "w-3.5 h-3.5"}>
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    class={props.class ?? "w-3.5 h-3.5"}
+  >
     <polyline points="23 18 13.5 8.5 8.5 13.5 1 6" />
     <polyline points="17 18 23 18 23 12" />
   </svg>
@@ -135,17 +147,12 @@ const SymbolSearch: Component = () => {
   let inputRef: HTMLInputElement | undefined;
   let listRef: HTMLDivElement | undefined;
 
-  const ALLOWED_SYMBOLS = ["BTC", "ETH", "SOL", "HYPE", "ZEC"];
-
   const filteredMarkets = createMemo(() => {
     const q = query().toLowerCase();
     const f = filter();
     const allMarkets = MARKETS();
 
     let results = allMarkets.filter((m) => {
-      // Only show allowed symbols
-      if (!ALLOWED_SYMBOLS.includes(m.symbol)) return false;
-
       const matchesQuery =
         !q ||
         m.name.toLowerCase().includes(q) ||
@@ -424,15 +431,23 @@ const SymbolSearch: Component = () => {
                 >
                   <div class="market-info">
                     <Show
-                      when={["BTC", "ETH", "HYPE", "SOL", "ZEC"].includes(market.symbol)}
+                      when={["BTC", "ETH", "HYPE", "SOL", "ZEC"].includes(
+                        market.symbol,
+                      )}
                       fallback={
-                        <div class={`market-icon bg-gradient-to-br ${getIconGradient(market.symbol)}`}>
+                        <div
+                          class={`market-icon bg-gradient-to-br ${getIconGradient(market.symbol)}`}
+                        >
                           <span>{getIconLabel(market.symbol)}</span>
                         </div>
                       }
                     >
                       <div class="market-icon">
-                        <img src={`/${market.symbol.toLowerCase()}.svg`} alt={market.symbol} class="coin-logo" />
+                        <img
+                          src={`/${market.symbol.toLowerCase()}.svg`}
+                          alt={market.symbol}
+                          class="coin-logo"
+                        />
                       </div>
                     </Show>
                     <div class="market-details">
@@ -442,7 +457,9 @@ const SymbolSearch: Component = () => {
                             ? `[${market.name}]`
                             : market.name}
                         </span>
-                        <span class="leverage-badge">{market.type === "spot" ? "Spot" : market.leverage}</span>
+                        <span class="leverage-badge">
+                          {market.type === "spot" ? "Spot" : market.leverage}
+                        </span>
                         {market.type === "equities" && (
                           <span class="xyz-badge">XYZ</span>
                         )}
@@ -451,7 +468,9 @@ const SymbolSearch: Component = () => {
                     </div>
                   </div>
 
-                  <div class={`change-cell ${isPositive ? "positive" : "negative"}`}>
+                  <div
+                    class={`change-cell ${isPositive ? "positive" : "negative"}`}
+                  >
                     <div class="change-indicator">
                       {isPositive ? (
                         <TrendingUpIcon class="trend-icon" />
@@ -468,18 +487,26 @@ const SymbolSearch: Component = () => {
                   </div>
 
                   <div class="volume-cell">
-                    <span class="volume-value">{formatVolume(market.volume24h)}</span>
+                    <span class="volume-value">
+                      {formatVolume(market.volume24h)}
+                    </span>
                   </div>
 
                   <div class="oi-cell">
                     <span class="oi-value">
-                      {market.type === "spot" ? "--" : formatVolume(market.openInterest)}
+                      {market.type === "spot"
+                        ? "--"
+                        : formatVolume(market.openInterest)}
                     </span>
                   </div>
 
-                  <div class={`funding-cell ${market.type === "spot" ? "" : market.funding >= 0 ? "positive" : "negative"}`}>
+                  <div
+                    class={`funding-cell ${market.type === "spot" ? "" : market.funding >= 0 ? "positive" : "negative"}`}
+                  >
                     <span class="funding-value">
-                      {market.type === "spot" ? "--" : formatPercent(market.funding)}
+                      {market.type === "spot"
+                        ? "--"
+                        : formatPercent(market.funding)}
                     </span>
                   </div>
 

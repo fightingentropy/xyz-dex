@@ -16,11 +16,13 @@ import {
 import type { IChartApi, ISeriesApi } from "lightweight-charts";
 import {
   fetchCandles as fetchBinanceCandles,
+  fetchSpotCandles,
   resolutionToMs,
   Candle,
   toInterval as toBinanceInterval,
   toBinanceSymbol,
 } from "../lib/binance";
+import { fetchLighterCandles } from "../lib/lighter";
 import {
   fetchHyperliquidCandles,
   normalizeSymbol,
@@ -31,7 +33,11 @@ import {
   updateCachedCandles,
   updateLastCandle,
 } from "../stores/chartCache";
-import { dataProvider } from "../stores/market";
+import {
+  currentMarketType,
+  dataProvider,
+  type DataProvider,
+} from "../stores/market";
 
 interface SymbolChartProps {
   symbol: string;
@@ -47,6 +53,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
   let volumeSeries: ISeriesApi<"Histogram"> | undefined;
   let streamSocket: WebSocket | undefined;
   let reconnectTimer: number | undefined;
+  let streamTimer: number | undefined;
   let streamGeneration = 0;
   let lastLoadedKey: string | undefined;
   let localCandles: Candle[] = [];
@@ -125,18 +132,36 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
   };
 
   const fetchCandlesForProvider = async (
-    provider: "hyperliquid" | "binance",
+    provider: DataProvider,
     symbol: string,
     resolution: string,
     fromMs: number,
     toMs: number,
+    marketType: "perps" | "spot" | "equities",
   ) => {
     if (provider === "binance") {
+      if (marketType === "spot") {
+        return fetchSpotCandles({
+          coin: symbol,
+          resolution,
+          fromMs,
+          toMs,
+        });
+      }
       return fetchBinanceCandles({
         coin: symbol,
         resolution,
         fromMs,
         toMs,
+      });
+    }
+    if (provider === "lighter") {
+      return fetchLighterCandles({
+        coin: symbol,
+        resolution,
+        fromMs,
+        toMs,
+        marketType: marketType === "spot" ? "spot" : "perps",
       });
     }
     return fetchHyperliquidCandles({
@@ -150,12 +175,14 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
   const loadCandles = async (
     symbol: string,
     resolution: string,
-    provider: "hyperliquid" | "binance",
+    provider: DataProvider,
   ) => {
     if (!chartReady() || !candleSeries) return;
 
-    const cacheKey = `${provider}:${symbol}:${resolution}`;
-    const cached = getCachedCandles(provider, symbol, resolution);
+    const marketType = currentMarketType();
+    const cacheSymbol = `${symbol}-${marketType}`;
+    const cacheKey = `${provider}:${cacheSymbol}:${resolution}`;
+    const cached = getCachedCandles(provider, cacheSymbol, resolution);
     const now = Date.now();
     const periodMs = resolutionToMs(resolution);
     const barsCount = 400;
@@ -177,12 +204,13 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
           resolution,
           fromMs,
           now,
+          marketType,
         );
 
         if (newCandles.length > 0) {
           const mergedCandles = updateCachedCandles(
             provider,
-            symbol,
+            cacheSymbol,
             resolution,
             newCandles,
             false,
@@ -217,10 +245,11 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
         resolution,
         fromMs,
         now,
+        marketType,
       );
 
       if (candles.length > 0) {
-        updateCachedCandles(provider, symbol, resolution, candles, true);
+        updateCachedCandles(provider, cacheSymbol, resolution, candles, true);
         candleSeries.setData(formatCandleData(candles));
         volumeSeries?.setData(formatVolumeData(candles));
         localCandles = candles;
@@ -242,6 +271,10 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
       clearTimeout(reconnectTimer);
       reconnectTimer = undefined;
     }
+    if (streamTimer) {
+      clearInterval(streamTimer);
+      streamTimer = undefined;
+    }
     if (streamSocket) {
       streamSocket.close();
       streamSocket = undefined;
@@ -251,13 +284,81 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
   const startStreaming = (
     symbol: string,
     resolution: string,
-    provider: "hyperliquid" | "binance",
+    provider: DataProvider,
   ) => {
     stopStreaming();
 
     if (!chartReady() || !candleSeries) return;
 
+    const marketType = currentMarketType();
     const generation = streamGeneration;
+    if (
+      provider === "lighter" ||
+      (provider === "binance" && marketType === "spot")
+    ) {
+      const periodMs = resolutionToMs(resolution);
+      const poll = async () => {
+        if (generation !== streamGeneration) return;
+        const now = Date.now();
+        const lastTime =
+          localCandles.length > 0
+            ? localCandles[localCandles.length - 1].time
+            : now - periodMs * 2;
+        const fromMs = Math.max(0, lastTime - periodMs);
+
+        try {
+          const candles =
+            provider === "lighter"
+              ? await fetchLighterCandles({
+                  coin: symbol,
+                  resolution,
+                  fromMs,
+                  toMs: now,
+                  marketType: marketType === "spot" ? "spot" : "perps",
+                })
+              : await fetchSpotCandles({
+                  coin: symbol,
+                  resolution,
+                  fromMs,
+                  toMs: now,
+                });
+          if (generation !== streamGeneration) return;
+          const latest = candles[candles.length - 1];
+          if (!latest || !Number.isFinite(latest.time)) return;
+
+          updateLastCandle(
+            provider,
+            `${symbol}-${marketType}`,
+            resolution,
+            latest,
+          );
+          upsertLocalCandle(latest);
+
+          candleSeries?.update({
+            time: (latest.time / 1000) as Time,
+            open: latest.open,
+            high: latest.high,
+            low: latest.low,
+            close: latest.close,
+          });
+
+          volumeSeries?.update({
+            time: (latest.time / 1000) as Time,
+            value: latest.volume,
+            color:
+              latest.close >= latest.open
+                ? "rgba(80, 227, 171, 0.5)"
+                : "rgba(255, 85, 114, 0.5)",
+          });
+        } catch {
+          // Ignore failed polls
+        }
+      };
+
+      poll();
+      streamTimer = setInterval(poll, 5000) as unknown as number;
+      return;
+    }
     const interval =
       provider === "binance"
         ? toBinanceInterval(resolution)
@@ -328,7 +429,12 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
           }
           if (!candle || !Number.isFinite(candle.time)) return;
 
-          updateLastCandle(provider, symbol, resolution, candle);
+          updateLastCandle(
+            provider,
+            `${symbol}-${marketType}`,
+            resolution,
+            candle,
+          );
           upsertLocalCandle(candle);
 
           candleSeries?.update({
