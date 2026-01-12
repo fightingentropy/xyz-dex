@@ -8,6 +8,7 @@ export default defineSchema({
     email: v.optional(v.string()),
     isAdmin: v.optional(v.boolean()),
     deviceId: v.optional(v.string()), // Legacy field for old documents
+    demoSeedVersion: v.optional(v.number()),
     portfolioMarginEnabled: v.optional(v.boolean()), // Enable spot-collateralized perps
     createdAt: v.number(),
     lastSeenAt: v.number(),
