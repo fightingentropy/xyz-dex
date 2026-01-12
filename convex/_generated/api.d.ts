@@ -16,6 +16,7 @@ import type * as jwks from "../jwks.js";
 import type * as lib_admin from "../lib/admin.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_portfolio from "../lib/portfolio.js";
+import type * as migrations from "../migrations.js";
 import type * as orders from "../orders.js";
 import type * as portfolio from "../portfolio.js";
 import type * as portfolioMargin from "../portfolioMargin.js";
@@ -38,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   "lib/admin": typeof lib_admin;
   "lib/auth": typeof lib_auth;
   "lib/portfolio": typeof lib_portfolio;
+  migrations: typeof migrations;
   orders: typeof orders;
   portfolio: typeof portfolio;
   portfolioMargin: typeof portfolioMargin;
