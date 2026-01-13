@@ -339,7 +339,7 @@ export const TICKER_DATA = () => {
 
 const DEFAULT_PERPS_LEVERAGE = "10x";
 const DEFAULT_SPOT_LEVERAGE = "1x";
-const BASELINE_PERPS = ["BTC", "ETH", "SOL", "ZEC"];
+const BASELINE_PERPS = ["BTC", "ETH", "HYPE", "SOL", "ZEC"];
 
 const formatPriceValue = (value: number): string => {
   if (!Number.isFinite(value) || value <= 0) return "--";
@@ -421,6 +421,7 @@ const getTrackedAssets = (provider: DataProvider) => {
 
   if (provider !== "hyperliquid") {
     spots.delete("HYPE");
+    perps.delete("HYPE");
   }
 
   return {
