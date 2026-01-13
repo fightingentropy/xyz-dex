@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
@@ -410,7 +410,7 @@ export const updatePositionTpsl = mutation({
         args.takeProfit !== null &&
         (!Number.isFinite(args.takeProfit) || args.takeProfit <= 0)
       ) {
-        throw new Error("Invalid take profit price.");
+        throw new ConvexError("Invalid take profit price.");
       }
       updates.takeProfit = args.takeProfit;
     }
@@ -420,7 +420,7 @@ export const updatePositionTpsl = mutation({
         args.stopLoss !== null &&
         (!Number.isFinite(args.stopLoss) || args.stopLoss <= 0)
       ) {
-        throw new Error("Invalid stop loss price.");
+        throw new ConvexError("Invalid stop loss price.");
       }
       updates.stopLoss = args.stopLoss;
     }
@@ -547,13 +547,13 @@ export const placePerpsOrder = mutation({
   handler: async (ctx, args) => {
     const user = await requireAuthUser(ctx);
     if (!Number.isFinite(args.size) || args.size <= 0) {
-      throw new Error("Size must be positive.");
+      throw new ConvexError("Size must be positive.");
     }
     if (!Number.isFinite(args.markPrice) || args.markPrice <= 0) {
-      throw new Error("Invalid mark price.");
+      throw new ConvexError("Invalid mark price.");
     }
     if (!Number.isFinite(args.leverage) || args.leverage <= 0) {
-      throw new Error("Invalid leverage.");
+      throw new ConvexError("Invalid leverage.");
     }
 
     const marginType = args.marginType ?? "cross";
@@ -607,7 +607,7 @@ export const placePerpsOrder = mutation({
         nextMarginUsed > collateralPool &&
         nextMarginUsed >= currentMarginUsed
       ) {
-        throw new Error("Insufficient collateral.");
+        throw new ConvexError("Insufficient collateral.");
       }
     } else {
       const collateralPositions = positions.filter(
@@ -636,7 +636,7 @@ export const placePerpsOrder = mutation({
         nextMarginUsed > availableBalance &&
         nextMarginUsed >= currentMarginUsed
       ) {
-        throw new Error("Insufficient collateral.");
+        throw new ConvexError("Insufficient collateral.");
       }
     }
 
@@ -734,7 +734,7 @@ export const fillOpenOrder = mutation({
     const fillPrice =
       order.price ?? (Number.isFinite(args.markPrice) ? args.markPrice : 0);
     if (!Number.isFinite(fillPrice) || fillPrice <= 0) {
-      throw new Error("Invalid fill price.");
+      throw new ConvexError("Invalid fill price.");
     }
 
     await ctx.db.patch(order._id, {
@@ -768,7 +768,7 @@ export const closePosition = mutation({
     const position = await getPosition(ctx, user._id, args.symbol);
     if (!position) return;
     if (!Number.isFinite(args.markPrice) || args.markPrice <= 0) {
-      throw new Error("Invalid mark price.");
+      throw new ConvexError("Invalid mark price.");
     }
 
     const side = position.size > 0 ? "sell" : "buy";
@@ -815,10 +815,10 @@ export const autoDeleveragePosition = mutation({
     const position = await getPosition(ctx, user._id, args.symbol);
     if (!position) return;
     if (!Number.isFinite(args.markPrice) || args.markPrice <= 0) {
-      throw new Error("Invalid mark price.");
+      throw new ConvexError("Invalid mark price.");
     }
     if (!Number.isFinite(args.reduceSize) || args.reduceSize <= 0) {
-      throw new Error("Invalid reduce size.");
+      throw new ConvexError("Invalid reduce size.");
     }
 
     const absSize = Math.abs(position.size);

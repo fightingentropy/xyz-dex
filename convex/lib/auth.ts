@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 const getIdentity = async (ctx: MutationCtx | QueryCtx) => {
@@ -21,7 +22,7 @@ export const getAuthUser = async (ctx: MutationCtx | QueryCtx) => {
 export const requireAuthUser = async (ctx: MutationCtx | QueryCtx) => {
   const identity = await getIdentity(ctx);
   if (!identity) {
-    throw new Error("Not authenticated.");
+    throw new ConvexError("Not authenticated.");
   }
   const user = await ctx.db
     .query("users")
@@ -30,7 +31,7 @@ export const requireAuthUser = async (ctx: MutationCtx | QueryCtx) => {
     )
     .unique();
   if (!user) {
-    throw new Error("User not found.");
+    throw new ConvexError("User not found.");
   }
   return user;
 };

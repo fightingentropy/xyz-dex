@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireAuthUser } from "./auth";
 
@@ -22,7 +23,7 @@ export const getAdminConfig = (): AdminConfig => {
 export const requireAdmin = async (ctx: MutationCtx | QueryCtx) => {
   const user = await requireAuthUser(ctx);
   if (!user.isAdmin) {
-    throw new Error("Admin access required.");
+    throw new ConvexError("Admin access required.");
   }
   return user;
 };

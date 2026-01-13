@@ -1,7 +1,7 @@
 "use node";
 
 import { createSign, randomBytes, scryptSync, timingSafeEqual } from "crypto";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { action } from "./_generated/server";
 import { makeFunctionReference } from "convex/server";
 import type { Id } from "./_generated/dataModel";
@@ -59,10 +59,10 @@ const getAuthConfig = () => {
   const audience = process.env.CUSTOM_AUTH_AUDIENCE;
   const privateKeyRaw = process.env.CUSTOM_AUTH_PRIVATE_KEY;
   if (!issuer) {
-    throw new Error("CUSTOM_AUTH_ISSUER is not set.");
+    throw new ConvexError("CUSTOM_AUTH_ISSUER is not set.");
   }
   if (!privateKeyRaw) {
-    throw new Error("CUSTOM_AUTH_PRIVATE_KEY is not set.");
+    throw new ConvexError("CUSTOM_AUTH_PRIVATE_KEY is not set.");
   }
   const privateKey = normalizePem(privateKeyRaw);
   return {
@@ -176,17 +176,17 @@ export const signUp = action({
   handler: async (ctx, args) => {
     const emailLower = normalizeEmail(args.email);
     if (!isValidEmail(emailLower)) {
-      throw new Error("Enter a valid email address.");
+      throw new ConvexError("Enter a valid email address.");
     }
     if (args.password.length < 8) {
-      throw new Error("Password must be at least 8 characters.");
+      throw new ConvexError("Password must be at least 8 characters.");
     }
 
     const existing = await ctx.runQuery(getAccountByEmailRef, {
       emailLower,
     });
     if (existing) {
-      throw new Error("Email already in use.");
+      throw new ConvexError("Email already in use.");
     }
 
     const { passwordHash, passwordSalt } = createPasswordHash(args.password);
@@ -225,7 +225,7 @@ export const signIn = action({
   handler: async (ctx, args) => {
     const emailLower = normalizeEmail(args.email);
     if (!isValidEmail(emailLower)) {
-      throw new Error("Enter a valid email address.");
+      throw new ConvexError("Enter a valid email address.");
     }
     const account = await ctx.runQuery(getAccountByEmailRef, {
       emailLower,
@@ -234,7 +234,7 @@ export const signIn = action({
       !account ||
       !verifyPassword(args.password, account.passwordSalt, account.passwordHash)
     ) {
-      throw new Error("Invalid email or password.");
+      throw new ConvexError("Invalid email or password.");
     }
 
     await ctx.runMutation(updateLoginTimestampRef, {

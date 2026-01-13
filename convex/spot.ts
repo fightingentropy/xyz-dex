@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
@@ -57,7 +57,7 @@ export const transferUSDC = mutation({
   handler: async (ctx, args) => {
     const user = await requireAuthUser(ctx);
     if (!Number.isFinite(args.amount) || args.amount <= 0) {
-      throw new Error("Enter a valid amount.");
+      throw new ConvexError("Enter a valid amount.");
     }
 
     const perpsBalance = await ctx.db
@@ -73,7 +73,7 @@ export const transferUSDC = mutation({
 
     if (args.direction === "perpsToSpot") {
       if (args.amount > perpsAmount) {
-        throw new Error("Insufficient Perps USDC balance.");
+        throw new ConvexError("Insufficient Perps USDC balance.");
       }
       // Deduct from perps
       if (perpsBalance) {
@@ -86,7 +86,7 @@ export const transferUSDC = mutation({
       await upsertSpotBalance(ctx, user._id, "USDC", spotAmount + args.amount);
     } else {
       if (args.amount > spotAmount) {
-        throw new Error("Insufficient Spot USDC balance.");
+        throw new ConvexError("Insufficient Spot USDC balance.");
       }
       // Deduct from spot
       await upsertSpotBalance(ctx, user._id, "USDC", spotAmount - args.amount);
@@ -126,10 +126,10 @@ export const placeSpotOrder = mutation({
   handler: async (ctx, args) => {
     const user = await requireAuthUser(ctx);
     if (!Number.isFinite(args.size) || args.size <= 0) {
-      throw new Error("Enter a valid size.");
+      throw new ConvexError("Enter a valid size.");
     }
     if (!Number.isFinite(args.price) || args.price <= 0) {
-      throw new Error("Enter a valid price.");
+      throw new ConvexError("Enter a valid price.");
     }
 
     const quote = await getSpotBalance(ctx, user._id, "USDC");
@@ -140,7 +140,7 @@ export const placeSpotOrder = mutation({
 
     if (args.side === "buy") {
       if (notional > quoteBalance) {
-        throw new Error("Insufficient USDC balance.");
+        throw new ConvexError("Insufficient USDC balance.");
       }
       await upsertSpotBalance(ctx, user._id, "USDC", quoteBalance - notional);
       await upsertSpotBalance(
@@ -151,7 +151,7 @@ export const placeSpotOrder = mutation({
       );
     } else {
       if (args.size > baseBalance) {
-        throw new Error("Insufficient asset balance.");
+        throw new ConvexError("Insufficient asset balance.");
       }
       await upsertSpotBalance(ctx, user._id, "USDC", quoteBalance + notional);
       await upsertSpotBalance(

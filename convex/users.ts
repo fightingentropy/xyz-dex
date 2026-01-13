@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUser } from "./lib/auth";
 import { getAdminConfig } from "./lib/admin";
@@ -13,7 +14,7 @@ export const ensureUser = mutation({
   handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
-      throw new Error("Not authenticated.");
+      throw new ConvexError("Not authenticated.");
     }
     const now = Date.now();
     const shouldBeAdmin = isAdminEmail(identity.email);
