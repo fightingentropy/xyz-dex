@@ -9,6 +9,7 @@ export default defineSchema({
     isAdmin: v.optional(v.boolean()),
     deviceId: v.optional(v.string()), // Legacy field for old documents
     portfolioMarginEnabled: v.optional(v.boolean()), // Enable cross-asset portfolio margin
+    demoSeedVersion: v.optional(v.number()), // Legacy field for seeded demo users
     createdAt: v.number(),
     lastSeenAt: v.number(),
   }).index("by_token", ["tokenIdentifier"]),
