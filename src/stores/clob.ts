@@ -117,6 +117,14 @@ const parseNumber = (value: string | number): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const isMarkPricesValidationError = (error: unknown) => {
+  if (!(error instanceof Error)) return false;
+  return (
+    error.message.includes("markPrices") &&
+    error.message.includes("not in the validator")
+  );
+};
+
 const [lastPrices, setLastPrices] = createStore<Record<string, number>>({});
 
 const ADL_COOLDOWN_MS = 4000;
@@ -453,9 +461,20 @@ createRoot(() => {
       try {
         await convex.mutation(api.orders.updateFundingForPositions, {
           fundingRates,
-          markPrices,
+          ...(Object.keys(markPrices).length > 0 ? { markPrices } : {}),
         });
       } catch (error) {
+        if (isMarkPricesValidationError(error)) {
+          try {
+            await convex.mutation(api.orders.updateFundingForPositions, {
+              fundingRates,
+            });
+            return;
+          } catch (retryError) {
+            console.error("Failed to update funding:", retryError);
+            return;
+          }
+        }
         console.error("Failed to update funding:", error);
       }
     }
@@ -627,21 +646,39 @@ export const placeOrder = async ({
     }
   }
 
+  const baseArgs = {
+    symbol,
+    side,
+    type,
+    size,
+    price: Number.isFinite(price ?? NaN) ? price : undefined,
+    leverage,
+    collateral,
+    marginType,
+    markPrice: mark,
+  };
+
   try {
-    await convex.mutation(api.orders.placePerpsOrder, {
-      symbol,
-      side,
-      type,
-      size,
-      price: Number.isFinite(price ?? NaN) ? price : undefined,
-      leverage,
-      collateral,
-      marginType,
-      markPrice: mark,
-      markPrices,
-    });
+    const orderArgs = {
+      ...baseArgs,
+      ...(Object.keys(markPrices).length > 0 ? { markPrices } : {}),
+    };
+    await convex.mutation(api.orders.placePerpsOrder, orderArgs);
     return { ok: true };
   } catch (error) {
+    if (isMarkPricesValidationError(error)) {
+      try {
+        await convex.mutation(api.orders.placePerpsOrder, baseArgs);
+        return { ok: true };
+      } catch (retryError) {
+        const message =
+          retryError instanceof Error
+            ? retryError.message
+            : "Order submission failed.";
+        console.error("Failed to place order:", retryError);
+        return { ok: false, error: message };
+      }
+    }
     const message =
       error instanceof Error ? error.message : "Order submission failed.";
     console.error("Failed to place order:", error);
