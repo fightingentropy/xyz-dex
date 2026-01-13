@@ -43,17 +43,17 @@ const calculateFundingForHours = (
   hoursElapsed: number,
 ): number => {
   if (hoursElapsed <= 0 || position.size === 0) return 0;
-  
+
   const positionNotional = Math.abs(position.size) * markPrice;
   const isLong = position.size > 0;
-  
+
   // Calculate funding for each hour
   // For longs: if funding rate is positive, they pay (negative), if negative, they receive (positive)
   // For shorts: opposite - positive funding rate means receiving (positive), negative means paying (negative)
   const fundingPerHour = isLong
     ? -positionNotional * fundingRate
     : positionNotional * fundingRate;
-  
+
   // Sum funding for all hours
   return fundingPerHour * hoursElapsed;
 };
@@ -290,6 +290,8 @@ const applyFillToPosition = async (
     collateral,
     marginType,
     spotCollateralSize,
+    takeProfit: null,
+    stopLoss: null,
     realizedPnl: nextRealized,
     updatedAt: now,
   });
@@ -412,6 +414,44 @@ export const listPositions = query({
   },
 });
 
+export const updatePositionTpsl = mutation({
+  args: {
+    symbol: v.string(),
+    takeProfit: v.optional(v.union(v.number(), v.null())),
+    stopLoss: v.optional(v.union(v.number(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAuthUser(ctx);
+    const position = await getPosition(ctx, user._id, args.symbol);
+    if (!position) return;
+
+    const updates: Record<string, number | null> = {};
+
+    if (args.takeProfit !== undefined) {
+      if (
+        args.takeProfit !== null &&
+        (!Number.isFinite(args.takeProfit) || args.takeProfit <= 0)
+      ) {
+        throw new Error("Invalid take profit price.");
+      }
+      updates.takeProfit = args.takeProfit;
+    }
+
+    if (args.stopLoss !== undefined) {
+      if (
+        args.stopLoss !== null &&
+        (!Number.isFinite(args.stopLoss) || args.stopLoss <= 0)
+      ) {
+        throw new Error("Invalid stop loss price.");
+      }
+      updates.stopLoss = args.stopLoss;
+    }
+
+    if (Object.keys(updates).length === 0) return;
+    await ctx.db.patch(position._id, updates);
+  },
+});
+
 /**
  * Update funding for positions based on funding rates.
  * This should be called periodically (e.g., every hour) to accumulate funding.
@@ -419,9 +459,7 @@ export const listPositions = query({
  */
 export const updateFundingForPositions = mutation({
   args: {
-    fundingRates: v.optional(
-      v.record(v.string(), v.number()),
-    ), // Map of symbol -> funding rate (decimal)
+    fundingRates: v.optional(v.record(v.string(), v.number())), // Map of symbol -> funding rate (decimal)
     markPrices: v.optional(v.record(v.string(), v.number())), // Map of symbol -> mark price
   },
   handler: async (ctx, args) => {
@@ -489,7 +527,12 @@ export const updateFundingForPositions = mutation({
       });
 
       // Adjust balance based on funding (funding affects the perps balance)
-      await adjustPerpsBalance(ctx, user._id, position.collateral, fundingDelta);
+      await adjustPerpsBalance(
+        ctx,
+        user._id,
+        position.collateral,
+        fundingDelta,
+      );
 
       updatedCount++;
     }

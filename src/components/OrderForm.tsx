@@ -21,6 +21,7 @@ import {
   placeOrder,
   positions,
   togglePortfolioMargin,
+  updatePositionTpsl,
 } from "../stores/clob";
 import { isAuthenticated } from "../stores/auth";
 import { getSpotBalance, isSpotAsset, placeSpotOrder } from "../stores/wallet";
@@ -468,6 +469,13 @@ const OrderForm: Component = () => {
     isPortfolioMarginEnabled() ? "Portfolio" : "Classic",
   );
 
+  const parsePriceInput = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : NaN;
+  };
+
   const handleToggleMarginMode = async () => {
     if (!isAuthenticated()) return;
     setMarginModeLoading(true);
@@ -674,6 +682,17 @@ const OrderForm: Component = () => {
       return;
     }
 
+    const tpValue = tpsl() ? parsePriceInput(takeProfit()) : null;
+    const slValue = tpsl() ? parsePriceInput(stopLoss()) : null;
+    if (tpValue !== null && Number.isNaN(tpValue)) {
+      setOrderError("Enter a valid take profit price.");
+      return;
+    }
+    if (slValue !== null && Number.isNaN(slValue)) {
+      setOrderError("Enter a valid stop loss price.");
+      return;
+    }
+
     const result = await placeOrder({
       symbol: currentSymbol(),
       side: isLong() ? "buy" : "sell",
@@ -688,7 +707,23 @@ const OrderForm: Component = () => {
       setOrderError(result.error ?? "Order failed.");
       return;
     }
-    setOrderError("");
+
+    let tpslError = false;
+    if (tpsl() && (tpValue !== null || slValue !== null)) {
+      const tpslResult = await updatePositionTpsl({
+        symbol: currentSymbol(),
+        takeProfit: tpValue,
+        stopLoss: slValue,
+      });
+      if (!tpslResult.ok) {
+        setOrderError(tpslResult.error ?? "Failed to update TP/SL.");
+        tpslError = true;
+      }
+    }
+
+    if (!tpslError) {
+      setOrderError("");
+    }
     setAmount("");
     setSliderValue(0);
   };

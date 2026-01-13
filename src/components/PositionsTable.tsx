@@ -1,13 +1,15 @@
-import { Component, For, Show, createMemo } from "solid-js";
+import { Component, For, Show, createMemo, createSignal } from "solid-js";
 import { formatPrice } from "../lib/hyperliquid";
 import {
   Collateral,
+  Position,
   closePosition,
   getBalance,
   getMarkPriceForSymbol,
   positions,
+  updatePositionTpsl,
 } from "../stores/clob";
-import { MARKETS, setCurrentSymbol } from "../stores/market";
+import { setCurrentSymbol } from "../stores/market";
 import { setCurrentPage } from "../stores/page";
 
 const columns = [
@@ -23,6 +25,14 @@ const columns = [
   "Actions",
   "TP/SL",
 ];
+
+const formatTpslValue = (value?: number | null) => {
+  if (!Number.isFinite(value ?? NaN) || (value ?? 0) <= 0) return "--";
+  return formatPrice(value);
+};
+
+const formatTpslInput = (value?: number | null) =>
+  Number.isFinite(value ?? NaN) && (value ?? 0) > 0 ? String(value) : "";
 
 const formatSize = (size: number) => {
   const abs = Math.abs(size);
@@ -46,6 +56,11 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
   const cellPadding = props.compact ? "px-3 py-1.5" : "px-3 py-2";
   const headerPadding = props.compact ? "px-3 py-2" : "px-3 py-2.5";
   const textSize = props.compact ? "text-xs" : "text-sm";
+  const [editingSymbol, setEditingSymbol] = createSignal<string | null>(null);
+  const [tpInput, setTpInput] = createSignal("");
+  const [slInput, setSlInput] = createSignal("");
+  const [tpslError, setTpslError] = createSignal("");
+  const [tpslSaving, setTpslSaving] = createSignal(false);
   const unrealizedByCollateral = createMemo(() => {
     const totals: Record<Collateral, number> = { USDC: 0, USDT: 0 };
     for (const position of positions()) {
@@ -61,9 +76,60 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
     setCurrentPage("trade");
   };
 
+  const openTpslEditor = (position: Position) => {
+    setEditingSymbol(position.symbol);
+    setTpInput(formatTpslInput(position.takeProfit));
+    setSlInput(formatTpslInput(position.stopLoss));
+    setTpslError("");
+  };
+
+  const closeTpslEditor = () => {
+    setEditingSymbol(null);
+    setTpInput("");
+    setSlInput("");
+    setTpslError("");
+  };
+
+  const parsePriceInput = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number.parseFloat(trimmed);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : NaN;
+  };
+
+  const saveTpsl = async () => {
+    const symbol = editingSymbol();
+    if (!symbol || tpslSaving()) return;
+    const tpValue = parsePriceInput(tpInput());
+    const slValue = parsePriceInput(slInput());
+
+    if (tpValue !== null && Number.isNaN(tpValue)) {
+      setTpslError("Enter a valid take profit price.");
+      return;
+    }
+    if (slValue !== null && Number.isNaN(slValue)) {
+      setTpslError("Enter a valid stop loss price.");
+      return;
+    }
+
+    setTpslSaving(true);
+    const result = await updatePositionTpsl({
+      symbol,
+      takeProfit: tpValue,
+      stopLoss: slValue,
+    });
+    setTpslSaving(false);
+
+    if (!result.ok) {
+      setTpslError(result.error ?? "Failed to update TP/SL.");
+      return;
+    }
+    closeTpslEditor();
+  };
+
   return (
     <div class="overflow-x-auto">
-      <table class="w-full min-w-[1200px]">
+      <table class="w-full min-w-300">
         <thead>
           <tr class="border-b border-brand-border">
             <For each={columns}>
@@ -105,7 +171,10 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                 const spotCollateral = position.spotCollateralSize ?? 0;
                 const isShort = position.size < 0;
                 const hedgedSize = isShort ? spotCollateral : 0;
-                const unhedgedSize = Math.abs(position.size) - hedgedSize;
+                const unhedgedSize = Math.max(
+                  0,
+                  Math.abs(position.size) - hedgedSize,
+                );
                 const isFullyHedged = hedgedSize > 0 && unhedgedSize <= 0;
                 const isPartiallyHedged = hedgedSize > 0 && unhedgedSize > 0;
 
@@ -170,11 +239,6 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
 
                 // Funding display - show cumulative funding collected or paid
                 const fundingDisplay = () => {
-                  // Get funding rate for this symbol
-                  const market = MARKETS().find(
-                    (m) => m.symbol === position.symbol && m.type === "perps",
-                  );
-
                   // Show cumulative funding (calculated hourly based on funding rates)
                   // Funding is calculated every hour based on the funding rate at that time
                   // For longs: positive funding rate means paying funding (negative), negative means receiving (positive)
@@ -292,13 +356,74 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                     <td class={`${cellPadding} ${textSize}`}>
                       <button
                         class="text-brand-accent hover:underline"
-                        onClick={() => closePosition(position.symbol)}
+                        onClick={() => void closePosition(position.symbol)}
                       >
                         Close
                       </button>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
-                      <span class="font-mono text-brand-slate-400">--</span>
+                      <Show
+                        when={editingSymbol() === position.symbol}
+                        fallback={
+                          <button
+                            class="flex items-center gap-1 text-brand-slate-300 hover:text-slate-100"
+                            onClick={() => openTpslEditor(position)}
+                          >
+                            <span class="font-mono">
+                              {formatTpslValue(position.takeProfit)} /{" "}
+                              {formatTpslValue(position.stopLoss)}
+                            </span>
+                            <svg
+                              class="w-3.5 h-3.5 text-brand-slate-400"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="2"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            >
+                              <path d="M12 20h9" />
+                              <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />
+                            </svg>
+                          </button>
+                        }
+                      >
+                        <div class="flex items-center gap-2">
+                          <div class="flex items-center gap-1 rounded-md border border-brand-border bg-brand-screen px-2 py-1">
+                            <input
+                              class="w-16 bg-transparent text-right font-mono text-xs text-slate-100 placeholder:text-brand-slate-500 outline-none"
+                              value={tpInput()}
+                              onInput={(e) => setTpInput(e.currentTarget.value)}
+                              placeholder="TP"
+                            />
+                            <span class="text-brand-slate-500">/</span>
+                            <input
+                              class="w-16 bg-transparent text-right font-mono text-xs text-slate-100 placeholder:text-brand-slate-500 outline-none"
+                              value={slInput()}
+                              onInput={(e) => setSlInput(e.currentTarget.value)}
+                              placeholder="SL"
+                            />
+                          </div>
+                          <button
+                            class="text-xs text-brand-accent hover:underline disabled:opacity-60"
+                            disabled={tpslSaving()}
+                            onClick={() => void saveTpsl()}
+                          >
+                            {tpslSaving() ? "Saving" : "Save"}
+                          </button>
+                          <button
+                            class="text-xs text-brand-slate-400 hover:text-slate-200"
+                            onClick={closeTpslEditor}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        <Show when={tpslError()}>
+                          <div class="mt-1 text-[10px] text-brand-red-400">
+                            {tpslError()}
+                          </div>
+                        </Show>
+                      </Show>
                     </td>
                   </tr>
                 );

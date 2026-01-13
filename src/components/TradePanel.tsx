@@ -1,8 +1,9 @@
-import { Component, Show, createSignal, onCleanup } from "solid-js";
+import { Component, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import BalancesPanel from "./BalancesPanel";
 import OpenOrdersTable from "./OpenOrdersTable";
 import PositionsTable from "./PositionsTable";
 import TradeHistoryTable from "./TradeHistoryTable";
+import { openOrders, positions } from "../stores/clob";
 
 type TradeTab =
   | "balances"
@@ -92,6 +93,9 @@ const TradePanel: Component = () => {
     window.removeEventListener("resize", handleWindowResize);
   });
 
+  const positionsCount = createMemo(() => positions().length);
+  const openOrdersCount = createMemo(() => openOrders().length);
+
   return (
     <div
       class="shrink-0 border-t border-brand-border bg-brand-surface flex flex-col"
@@ -123,6 +127,11 @@ const TradePanel: Component = () => {
           onClick={() => setActiveTab("positions")}
         >
           Positions
+          <Show when={positionsCount() > 0}>
+            <span class="ml-1 text-[10px] text-brand-slate-300">
+              ({positionsCount()})
+            </span>
+          </Show>
         </button>
         <button
           class={`px-4 py-2 text-xs font-medium border-b-2 ${
@@ -133,6 +142,11 @@ const TradePanel: Component = () => {
           onClick={() => setActiveTab("openOrders")}
         >
           Open Orders
+          <Show when={openOrdersCount() > 0}>
+            <span class="ml-1 text-[10px] text-brand-slate-300">
+              ({openOrdersCount()})
+            </span>
+          </Show>
         </button>
         <button
           class={`px-4 py-2 text-xs font-medium border-b-2 ${

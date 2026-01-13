@@ -22,7 +22,10 @@ export type MarginType = "isolated" | "cross";
 export type { OrderBook };
 
 export type Order = Doc<"orders">;
-export type Position = Doc<"positions">;
+export type Position = Doc<"positions"> & {
+  takeProfit?: number | null;
+  stopLoss?: number | null;
+};
 
 // Portfolio Margin Status type
 export type PortfolioMarginStatus = {
@@ -37,6 +40,14 @@ export type PortfolioMarginStatus = {
     spotCollateralSize: number;
   }>;
 } | null;
+
+type PerpsBalance = {
+  asset: string;
+  balance: number;
+};
+
+const isCollateral = (asset: string): asset is Collateral =>
+  asset === "USDC" || asset === "USDT";
 
 const { openOrders, positions, perpsBalances, portfolioMarginStatus } =
   createRoot(() => {
@@ -73,18 +84,22 @@ const { openOrders, positions, perpsBalances, portfolioMarginStatus } =
 
     const perpsBalances = createMemo<Record<Collateral, number>>(() => {
       const next: Record<Collateral, number> = { USDC: 0, USDT: 0 };
-      const balances = balancesQuery() ?? [];
+      const balances = (balancesQuery() ?? []) as PerpsBalance[];
       for (const balance of balances) {
-        if (balance.asset === "USDC" || balance.asset === "USDT") {
+        if (isCollateral(balance.asset)) {
           next[balance.asset] = balance.balance;
         }
       }
       return next;
     });
 
+    const positionsAccessor = () => (positionsQuery() ?? []) as Position[];
+
+    const openOrdersAccessor = () => (openOrdersQuery() ?? []) as Order[];
+
     return {
-      openOrders: () => openOrdersQuery() ?? [],
-      positions: () => positionsQuery() ?? [],
+      openOrders: openOrdersAccessor,
+      positions: positionsAccessor,
       perpsBalances,
       portfolioMarginStatus: () =>
         portfolioMarginQuery() as PortfolioMarginStatus,
@@ -109,6 +124,8 @@ const ADL_MIN_REDUCTION = 0.0001;
 
 const adlCooldownBySymbol = new Map<string, number>();
 const adlInFlight = new Set<string>();
+const limitFillInFlight = new Set<Id<"orders">>();
+const tpslCloseInFlight = new Set<string>();
 
 export const getMarkPriceForSymbol = (symbol: string) => {
   if (!symbol) return 0;
@@ -246,8 +263,84 @@ createRoot(() => {
     }
   });
 
+  createEffect(() => {
+    if (!isAuthenticated()) return;
+    const orders = openOrders();
+    if (orders.length === 0) return;
+
+    for (const order of orders) {
+      if (order.type !== "limit") continue;
+      const limitPrice = typeof order.price === "number" ? order.price : null;
+      if (
+        limitPrice === null ||
+        !Number.isFinite(limitPrice) ||
+        limitPrice <= 0
+      )
+        continue;
+      const mark = getMarkPriceForSymbol(order.symbol);
+      if (!Number.isFinite(mark) || mark <= 0) continue;
+
+      const shouldFill =
+        order.side === "buy" ? mark <= limitPrice : mark >= limitPrice;
+      if (!shouldFill) continue;
+      if (limitFillInFlight.has(order._id)) continue;
+
+      limitFillInFlight.add(order._id);
+      void convex
+        .mutation(api.orders.fillOpenOrder, {
+          orderId: order._id,
+          markPrice: mark,
+        })
+        .catch((error) => {
+          console.error("Failed to auto-fill limit order:", error);
+        })
+        .finally(() => {
+          limitFillInFlight.delete(order._id);
+        });
+    }
+  });
+
+  createEffect(() => {
+    if (!isAuthenticated()) return;
+    const activePositions = positions();
+    if (activePositions.length === 0) return;
+
+    for (const position of activePositions) {
+      if (position.size === 0) continue;
+      if (tpslCloseInFlight.has(position.symbol)) continue;
+      const mark = getMarkPriceForSymbol(position.symbol);
+      if (!Number.isFinite(mark) || mark <= 0) continue;
+
+      const takeProfit = position.takeProfit ?? null;
+      const stopLoss = position.stopLoss ?? null;
+      const isLong = position.size > 0;
+
+      const tpHit =
+        takeProfit != null &&
+        Number.isFinite(takeProfit) &&
+        (isLong ? mark >= takeProfit : mark <= takeProfit);
+      const slHit =
+        stopLoss != null &&
+        Number.isFinite(stopLoss) &&
+        (isLong ? mark <= stopLoss : mark >= stopLoss);
+
+      if (!tpHit && !slHit) continue;
+      tpslCloseInFlight.add(position.symbol);
+      void convex
+        .mutation(api.orders.closePosition, {
+          symbol: position.symbol,
+          markPrice: mark,
+        })
+        .catch((error) => {
+          console.error("Failed to auto-close position:", error);
+        })
+        .finally(() => {
+          tpslCloseInFlight.delete(position.symbol);
+        });
+    }
+  });
+
   // Update funding for positions at the top of each hour.
-  let fundingUpdateTimer: number | undefined;
   let fundingUpdateTimeout: number | undefined;
 
   /**
@@ -459,6 +552,40 @@ export const placeOrder = async ({
     const message =
       error instanceof Error ? error.message : "Order submission failed.";
     console.error("Failed to place order:", error);
+    return { ok: false, error: message };
+  }
+};
+
+export const updatePositionTpsl = async ({
+  symbol,
+  takeProfit,
+  stopLoss,
+}: {
+  symbol: string;
+  takeProfit?: number | null;
+  stopLoss?: number | null;
+}): Promise<{ ok: boolean; error?: string }> => {
+  if (!isAuthenticated()) {
+    return { ok: false, error: "Sign in to update TP/SL." };
+  }
+  if (takeProfit != null && (!Number.isFinite(takeProfit) || takeProfit <= 0)) {
+    return { ok: false, error: "Enter a valid take profit price." };
+  }
+  if (stopLoss != null && (!Number.isFinite(stopLoss) || stopLoss <= 0)) {
+    return { ok: false, error: "Enter a valid stop loss price." };
+  }
+
+  try {
+    await convex.mutation(api.orders.updatePositionTpsl, {
+      symbol,
+      takeProfit: takeProfit ?? null,
+      stopLoss: stopLoss ?? null,
+    });
+    return { ok: true };
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Failed to update TP/SL.";
+    console.error("Failed to update TP/SL:", error);
     return { ok: false, error: message };
   }
 };

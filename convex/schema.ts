@@ -70,6 +70,8 @@ export default defineSchema({
     collateral: v.union(v.literal("USDC"), v.literal("USDT")),
     marginType: v.optional(v.union(v.literal("isolated"), v.literal("cross"))),
     spotCollateralSize: v.optional(v.number()), // Amount of position backed by spot holdings
+    takeProfit: v.optional(v.union(v.number(), v.null())),
+    stopLoss: v.optional(v.union(v.number(), v.null())),
     realizedPnl: v.number(),
     cumulativeFunding: v.optional(v.number()), // Cumulative funding collected or paid
     lastFundingUpdate: v.optional(v.number()), // Timestamp when funding was last calculated

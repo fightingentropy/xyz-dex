@@ -169,26 +169,6 @@ const App: Component = () => {
             </svg>
             <span class="text-xs">Portfolio</span>
           </button>
-          <button
-            class={`flex flex-col items-center gap-1 ${currentPage() === "charts" ? "text-brand-accent" : "text-brand-slate-400"}`}
-            onClick={() => setCurrentPage("charts")}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M3 3v18h18" />
-              <path d="m19 9-5 5-4-4-5 5" />
-            </svg>
-            <span class="text-xs">Charts</span>
-          </button>
           <Show when={isAdmin()}>
             <button
               class={`flex flex-col items-center gap-1 ${currentPage() === "admin" ? "text-brand-accent" : "text-brand-slate-400"}`}

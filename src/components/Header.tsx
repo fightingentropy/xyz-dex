@@ -54,16 +54,6 @@ const Header: Component = () => {
           >
             <p class="truncate">Portfolio</p>
           </button>
-          <button
-            class={
-              currentPage() === "charts"
-                ? "text-brand-accent"
-                : "text-brand-slate-400 hover:text-brand-slate-100"
-            }
-            onClick={() => setCurrentPage("charts")}
-          >
-            <p class="truncate">Charts</p>
-          </button>
           <Show when={isAdmin()}>
             <button
               class={

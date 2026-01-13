@@ -6,6 +6,8 @@ import TradeHistoryTable from "./TradeHistoryTable";
 import { portfolioMetrics, tradeHistory } from "../stores/portfolio";
 import {
   isPortfolioMarginEnabled,
+  openOrders,
+  positions,
   togglePortfolioMargin,
 } from "../stores/clob";
 
@@ -94,6 +96,14 @@ const Portfolio: Component = () => {
   const [chartType] = createSignal("PnL");
   const [isTogglingMargin, setIsTogglingMargin] = createSignal(false);
   const metrics = () => portfolioMetrics();
+  const positionsCount = createMemo(() => positions().length);
+  const openOrdersCount = createMemo(() => openOrders().length);
+
+  const tabCountFor = (tabId: TabId) => {
+    if (tabId === "positions") return positionsCount();
+    if (tabId === "openOrders") return openOrdersCount();
+    return 0;
+  };
 
   const handleTogglePortfolioMargin = async () => {
     if (isTogglingMargin()) return;
@@ -495,6 +505,11 @@ const Portfolio: Component = () => {
                     onClick={() => setActiveTab(tab.id)}
                   >
                     {tab.label}
+                    <Show when={tabCountFor(tab.id) > 0}>
+                      <span class="ml-1 text-xs text-brand-slate-300">
+                        ({tabCountFor(tab.id)})
+                      </span>
+                    </Show>
                   </button>
                 )}
               </For>

@@ -1,6 +1,9 @@
 import {
   Component,
+  For,
+  Show,
   createEffect,
+  createMemo,
   createSignal,
   onCleanup,
   onMount,
@@ -21,10 +24,11 @@ import type {
   IPriceLine,
 } from "lightweight-charts";
 import {
-  currentMarket,
+  MARKETS,
   currentSymbol,
   currentMarketType,
   dataProvider,
+  selectMarket,
   type DataProvider,
 } from "../stores/market";
 import { getPositionForSymbol } from "../stores/clob";
@@ -53,6 +57,7 @@ type Resolution = (typeof RESOLUTIONS)[number];
 const DEFAULT_RESOLUTION: Resolution = "5";
 const RESOLUTION_STORAGE_KEY = "trade-xyz-chart-resolution";
 const MA_STORAGE_KEY = "trade-xyz-chart-ma";
+const WATCHLIST_STORAGE_KEY = "trade-xyz-watchlist";
 
 const RESOLUTION_LABELS: Record<Resolution, string> = {
   "1": "1m",
@@ -96,6 +101,18 @@ const MA_COLORS: Record<MaPeriod, string> = {
 
 const MAX_LOCAL_CANDLES = 1000;
 
+const formatExposure = (size: number) => {
+  if (!Number.isFinite(size) || size === 0) return "";
+  const abs = Math.abs(size);
+  let formatted = abs.toFixed(4);
+  if (abs >= 100) {
+    formatted = abs.toFixed(2);
+  } else if (abs >= 1) {
+    formatted = abs.toFixed(3);
+  }
+  return `${size > 0 ? "+" : "-"}${formatted}`;
+};
+
 const loadMaSettings = (): Record<MaPeriod, boolean> => {
   try {
     const stored = localStorage.getItem(MA_STORAGE_KEY);
@@ -115,6 +132,18 @@ const loadMaSettings = (): Record<MaPeriod, boolean> => {
   return DEFAULT_MA_ENABLED;
 };
 
+const loadWatchlistOrder = (): string[] => {
+  try {
+    const stored = localStorage.getItem(WATCHLIST_STORAGE_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((symbol) => typeof symbol === "string");
+  } catch (error) {
+    return [];
+  }
+};
+
 const TradingViewChart: Component = () => {
   let containerRef: HTMLDivElement | undefined;
   let chart: IChartApi | undefined;
@@ -128,6 +157,8 @@ const TradingViewChart: Component = () => {
   const maSeries = new Map<MaPeriod, ISeriesApi<"Line">>();
   let localCandles: Candle[] = [];
   let entryPriceLine: IPriceLine | undefined;
+  let takeProfitLine: IPriceLine | undefined;
+  let stopLossLine: IPriceLine | undefined;
 
   const [resolution, setResolution] =
     createSignal<Resolution>(loadResolution());
@@ -141,6 +172,37 @@ const TradingViewChart: Component = () => {
     x: number;
     y: number;
   } | null>(null);
+
+  const watchlistMarkets = createMemo(() => {
+    const list = MARKETS();
+    if (list.length === 0) return [];
+    const order = loadWatchlistOrder();
+    const orderIndex = new Map(order.map((symbol, index) => [symbol, index]));
+    const deduped = new Map<string, (typeof list)[number]>();
+
+    for (const market of list) {
+      if (!market.watchlist) continue;
+      const existing = deduped.get(market.symbol);
+      if (!existing || (existing.type !== "perps" && market.type === "perps")) {
+        deduped.set(market.symbol, market);
+      }
+    }
+
+    const result = [...deduped.values()];
+    result.sort((a, b) => {
+      const aIndex = orderIndex.get(a.symbol);
+      const bIndex = orderIndex.get(b.symbol);
+      if (aIndex != null && bIndex != null) return aIndex - bIndex;
+      if (aIndex != null) return -1;
+      if (bIndex != null) return 1;
+      return a.symbol.localeCompare(b.symbol);
+    });
+    return result;
+  });
+
+  const inactiveResolutions = createMemo(() =>
+    RESOLUTIONS.filter((res) => res !== resolution()),
+  );
 
   const handleVisibilityChange = () => {
     setIsTabVisible(!document.hidden);
@@ -159,6 +221,17 @@ const TradingViewChart: Component = () => {
   };
 
   const hasMa = () => MA_PERIODS.some((period) => maEnabled()[period]);
+
+  const formatWatchlistChange = (value: number) => {
+    if (!Number.isFinite(value)) return "--";
+    const sign = value >= 0 ? "+" : "";
+    return `${sign}${value.toFixed(2)}%`;
+  };
+
+  const watchlistChangeColor = (value: number) => {
+    if (!Number.isFinite(value)) return "text-brand-slate-500";
+    return value >= 0 ? "text-brand-green-400" : "text-brand-red-400";
+  };
 
   // Convert candle data to lightweight-charts format
   const formatCandleData = (candles: Candle[]): CandlestickData<Time>[] => {
@@ -672,7 +745,7 @@ const TradingViewChart: Component = () => {
   onMount(() => {
     if (!containerRef) return;
 
-    chart = createChart(containerRef, {
+    const chartInstance = createChart(containerRef, {
       layout: {
         background: { type: ColorType.Solid, color: "#0e1013" },
         textColor: "#6b7280",
@@ -732,8 +805,10 @@ const TradingViewChart: Component = () => {
       },
     });
 
+    chart = chartInstance;
+
     // Add candlestick series
-    candleSeries = chart.addSeries(CandlestickSeries, {
+    candleSeries = chartInstance.addSeries(CandlestickSeries, {
       upColor: "#50e3ab",
       downColor: "#ff5572",
       borderUpColor: "#50e3ab",
@@ -743,7 +818,7 @@ const TradingViewChart: Component = () => {
     });
 
     // Add volume series
-    volumeSeries = chart.addSeries(HistogramSeries, {
+    volumeSeries = chartInstance.addSeries(HistogramSeries, {
       priceFormat: {
         type: "volume",
       },
@@ -751,7 +826,7 @@ const TradingViewChart: Component = () => {
     });
 
     MA_PERIODS.forEach((period) => {
-      const series = chart.addSeries(LineSeries, {
+      const series = chartInstance.addSeries(LineSeries, {
         color: MA_COLORS[period],
         lineWidth: period === 200 ? 2 : 1,
         priceLineVisible: false,
@@ -843,97 +918,95 @@ const TradingViewChart: Component = () => {
     }
   });
 
-  // Position entry price line
+  // Position entry + TP/SL lines
   createEffect(() => {
     if (!chartReady() || !candleSeries) return;
 
     const symbol = currentSymbol();
     const position = getPositionForSymbol(symbol);
 
-    // Remove existing line if any
+    // Remove existing lines if any
     if (entryPriceLine) {
       candleSeries.removePriceLine(entryPriceLine);
       entryPriceLine = undefined;
     }
+    if (takeProfitLine) {
+      candleSeries.removePriceLine(takeProfitLine);
+      takeProfitLine = undefined;
+    }
+    if (stopLossLine) {
+      candleSeries.removePriceLine(stopLossLine);
+      stopLossLine = undefined;
+    }
 
-    // Add entry line if there's a position
-    if (position && position.size !== 0) {
-      const isLong = position.size > 0;
-      entryPriceLine = candleSeries.createPriceLine({
-        price: position.entryPrice,
-        color: isLong ? "#50e3ab" : "#ff5572",
+    // Add lines if there's a position
+    if (!position || position.size === 0) return;
+
+    const isLong = position.size > 0;
+    entryPriceLine = candleSeries.createPriceLine({
+      price: position.entryPrice,
+      color: isLong ? "#50e3ab" : "#ff5572",
+      lineWidth: 1,
+      lineStyle: 2, // Dashed
+      axisLabelVisible: true,
+      title: formatExposure(position.size),
+    });
+
+    const takeProfit = position.takeProfit ?? null;
+    if (Number.isFinite(takeProfit ?? NaN) && (takeProfit as number) > 0) {
+      takeProfitLine = candleSeries.createPriceLine({
+        price: takeProfit as number,
+        color: "#50e3ab",
         lineWidth: 1,
-        lineStyle: 2, // Dashed
+        lineStyle: 0,
         axisLabelVisible: true,
-        title: "",
+        title: "TP",
+      });
+    }
+
+    const stopLoss = position.stopLoss ?? null;
+    if (Number.isFinite(stopLoss ?? NaN) && (stopLoss as number) > 0) {
+      stopLossLine = candleSeries.createPriceLine({
+        price: stopLoss as number,
+        color: "#ff5572",
+        lineWidth: 1,
+        lineStyle: 0,
+        axisLabelVisible: true,
+        title: "SL",
       });
     }
   });
 
   return (
     <div class="chart-container trade-chart bg-brand-screen relative flex flex-col flex-1 min-h-0">
-      {/* Resolution toolbar */}
-      <div class="flex items-center gap-1 px-3 py-2 border-b border-brand-border bg-brand-surface/50">
-        {RESOLUTIONS.map((res) => (
-          <button
-            class={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
-              resolution() === res
-                ? "bg-brand-accent text-brand-screen"
-                : "text-brand-slate-400 hover:text-slate-200 hover:bg-brand-border/50"
-            }`}
-            onClick={() => setResolution(res)}
-          >
-            {RESOLUTION_LABELS[res]}
-          </button>
-        ))}
-        <div class="flex-1" />
-        <div class="relative">
-          <button
-            class={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
-              hasMa()
-                ? "bg-brand-border text-slate-200"
-                : "text-brand-slate-400 hover:text-slate-200 hover:bg-brand-border/50"
-            }`}
-            onClick={() => setMaMenuOpen(!maMenuOpen())}
-          >
-            MA
-          </button>
-          {maMenuOpen() && (
-            <>
-              <div
-                class="fixed inset-0 z-40"
-                onClick={() => setMaMenuOpen(false)}
-              />
-              <div class="absolute right-0 top-full mt-2 w-44 bg-brand-surface border border-brand-border rounded-lg shadow-xl z-50 py-2">
-                <div class="px-3 py-2 border-b border-brand-border">
-                  <span class="text-[11px] font-medium text-brand-slate-400 uppercase tracking-wider">
-                    Moving Averages
-                  </span>
-                </div>
-                {MA_PERIODS.map((period) => (
-                  <label class="flex items-center justify-between px-3 py-2 text-sm text-slate-200 hover:bg-brand-border/30 cursor-pointer">
-                    <span class="flex items-center gap-2">
-                      <span
-                        class="w-2.5 h-2.5 rounded-full"
-                        style={{ "background-color": MA_COLORS[period] }}
-                      />
-                      {period} MA
+      {/* Watchlist toolbar */}
+      <div class="flex items-center px-3 border-b border-brand-border bg-brand-surface/50">
+        <div class="flex-1 overflow-x-auto">
+          <div class="flex items-center whitespace-nowrap divide-x divide-brand-border/70">
+            <Show
+              when={watchlistMarkets().length > 0}
+              fallback={
+                <span class="px-3 py-2 text-xs text-brand-slate-500">
+                  Add symbols to your watchlist to show them here.
+                </span>
+              }
+            >
+              <For each={watchlistMarkets()}>
+                {(market) => (
+                  <button
+                    class="flex items-center gap-2 px-4 py-2 text-sm font-semibold uppercase tracking-wide text-slate-100 transition-colors hover:bg-brand-border/40"
+                    onClick={() => selectMarket(market)}
+                  >
+                    <span>{market.name}</span>
+                    <span class={watchlistChangeColor(market.change24h)}>
+                      {formatWatchlistChange(market.change24h)}
                     </span>
-                    <input
-                      type="checkbox"
-                      checked={maEnabled()[period]}
-                      onChange={() => toggleMa(period)}
-                      class="w-4 h-4 rounded border-brand-border bg-brand-screen"
-                    />
-                  </label>
-                ))}
-              </div>
-            </>
-          )}
+                  </button>
+                )}
+              </For>
+            </Show>
+          </div>
         </div>
-        <span class="text-xs text-brand-slate-500 font-mono">
-          {currentMarket()}
-        </span>
       </div>
 
       {/* Chart container */}
@@ -942,12 +1015,80 @@ const TradingViewChart: Component = () => {
         class="flex-1 relative"
         onContextMenu={handleContextMenu}
         onClick={handleClick}
-      />
+      >
+        <div class="absolute left-3 top-3 z-20 flex items-center gap-1 rounded-lg border border-brand-border/70 bg-brand-surface/80 px-2 py-1.5 shadow-sm backdrop-blur">
+          <div class="group flex items-center gap-1">
+            <button
+              class="px-2.5 py-1 text-xs font-medium rounded transition-colors bg-brand-accent text-brand-screen"
+              onClick={() => setResolution(resolution())}
+            >
+              {RESOLUTION_LABELS[resolution()]}
+            </button>
+            <div class="flex items-center gap-1 overflow-hidden max-w-0 opacity-0 scale-95 pointer-events-none transition-all duration-200 group-hover:max-w-65 group-hover:opacity-100 group-hover:scale-100 group-hover:pointer-events-auto">
+              <For each={inactiveResolutions()}>
+                {(res) => (
+                  <button
+                    class="px-2.5 py-1 text-xs font-medium rounded transition-colors text-brand-slate-400 hover:text-slate-200 hover:bg-brand-border/50"
+                    onClick={() => setResolution(res)}
+                  >
+                    {RESOLUTION_LABELS[res]}
+                  </button>
+                )}
+              </For>
+            </div>
+          </div>
+          <div class="mx-1 h-4 w-px bg-brand-border/70" />
+          <div class="relative">
+            <button
+              class={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${
+                hasMa()
+                  ? "bg-brand-border text-slate-200"
+                  : "text-brand-slate-400 hover:text-slate-200 hover:bg-brand-border/50"
+              }`}
+              onClick={() => setMaMenuOpen(!maMenuOpen())}
+            >
+              MA
+            </button>
+            {maMenuOpen() && (
+              <>
+                <div
+                  class="fixed inset-0 z-40"
+                  onClick={() => setMaMenuOpen(false)}
+                />
+                <div class="absolute left-0 top-full mt-2 w-44 bg-brand-surface border border-brand-border rounded-lg shadow-xl z-50 py-2">
+                  <div class="px-3 py-2 border-b border-brand-border">
+                    <span class="text-[11px] font-medium text-brand-slate-400 uppercase tracking-wider">
+                      Moving Averages
+                    </span>
+                  </div>
+                  {MA_PERIODS.map((period) => (
+                    <label class="flex items-center justify-between px-3 py-2 text-sm text-slate-200 hover:bg-brand-border/30 cursor-pointer">
+                      <span class="flex items-center gap-2">
+                        <span
+                          class="w-2.5 h-2.5 rounded-full"
+                          style={{ "background-color": MA_COLORS[period] }}
+                        />
+                        {period} MA
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={maEnabled()[period]}
+                        onChange={() => toggleMa(period)}
+                        class="w-4 h-4 rounded border-brand-border bg-brand-screen"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* Context menu */}
       {contextMenu() && (
         <div
-          class="fixed z-50 bg-brand-surface border border-brand-border rounded shadow-lg py-1 min-w-[140px]"
+          class="fixed z-50 bg-brand-surface border border-brand-border rounded shadow-lg py-1 min-w-35"
           style={{
             left: `${contextMenu()!.x}px`,
             top: `${contextMenu()!.y}px`,
