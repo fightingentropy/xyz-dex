@@ -30,15 +30,16 @@ export type Position = Doc<"positions"> & {
 // Portfolio Margin Status type
 export type PortfolioMarginStatus = {
   enabled: boolean;
-  hedgingStatus: Array<{
-    symbol: string;
-    positionSize: number;
-    spotBalance: number;
-    hedgedSize: number;
-    unhedgedSize: number;
-    fullyHedged: boolean;
-    spotCollateralSize: number;
-  }>;
+  collateral: {
+    spot: Array<{
+      asset: string;
+      balance: number;
+      price: number;
+      weight: number;
+      weightedValue: number;
+    }>;
+    weightedSpotEquity: number;
+  };
 } | null;
 
 type PerpsBalance = {
@@ -138,17 +139,18 @@ export const getMarkPriceForSymbol = (symbol: string) => {
   return parseNumber(fallback ?? 0);
 };
 
-const getUnhedgedSize = (position: Position) => {
-  const spotCollateral = position.spotCollateralSize ?? 0;
-  const isShort = position.size < 0;
-  const hedgedSize = isShort ? spotCollateral : 0;
-  return Math.max(0, Math.abs(position.size) - hedgedSize);
-};
-
 const shouldTriggerAdl = (
   position: Position,
   mark: number,
-  totalUnrealizedByCollateral: Record<Collateral, number>,
+  totals: {
+    portfolioMarginEnabled: boolean;
+    totalUnrealized: number;
+    totalMarginUsed: number;
+    totalPerpsBalance: number;
+    weightedSpotEquity: number;
+    unrealizedByCollateral: Record<Collateral, number>;
+    marginUsedByCollateral: Record<Collateral, number>;
+  },
 ) => {
   if (!Number.isFinite(mark) || mark <= 0) return false;
   if (!Number.isFinite(position.entryPrice) || position.entryPrice <= 0) {
@@ -158,8 +160,8 @@ const shouldTriggerAdl = (
     return false;
 
   const isShort = position.size < 0;
-  const unhedgedSize = getUnhedgedSize(position);
-  if (unhedgedSize <= 0) return false;
+  const absSize = Math.abs(position.size);
+  if (absSize <= 0) return false;
 
   const marginType = position.marginType ?? "cross";
   if (marginType === "isolated") {
@@ -172,16 +174,36 @@ const shouldTriggerAdl = (
   }
 
   const currentUnrealized = (mark - position.entryPrice) * position.size;
-  const balance = perpsBalances()[position.collateral] ?? 0;
-  const equity =
-    balance +
-    (totalUnrealizedByCollateral[position.collateral] - currentUnrealized);
+  const positionMarginUsed =
+    position.leverage > 0 ? (absSize * mark) / position.leverage : 0;
+  let equity = 0;
+
+  if (totals.portfolioMarginEnabled) {
+    const otherMarginUsed = Math.max(
+      0,
+      totals.totalMarginUsed - positionMarginUsed,
+    );
+    equity =
+      totals.totalPerpsBalance +
+      totals.weightedSpotEquity +
+      (totals.totalUnrealized - currentUnrealized) -
+      otherMarginUsed;
+  } else {
+    const balance = perpsBalances()[position.collateral] ?? 0;
+    const totalMarginUsed =
+      totals.marginUsedByCollateral[position.collateral] ?? 0;
+    const otherMarginUsed = Math.max(0, totalMarginUsed - positionMarginUsed);
+    equity =
+      balance +
+      (totals.unrealizedByCollateral[position.collateral] - currentUnrealized) -
+      otherMarginUsed;
+  }
   if (!Number.isFinite(equity)) return false;
   if (equity <= 0) return true;
 
   const liqPrice = isShort
-    ? position.entryPrice + equity / unhedgedSize
-    : position.entryPrice - equity / Math.abs(position.size);
+    ? position.entryPrice + equity / absSize
+    : position.entryPrice - equity / absSize;
   if (!Number.isFinite(liqPrice) || liqPrice <= 0) return false;
   return isShort ? mark >= liqPrice : mark <= liqPrice;
 };
@@ -247,18 +269,48 @@ createRoot(() => {
     const activePositions = positions();
     if (activePositions.length === 0) return;
 
-    const totalUnrealized: Record<Collateral, number> = { USDC: 0, USDT: 0 };
-    for (const position of activePositions) {
-      const mark = getMarkPriceForSymbol(position.symbol);
-      if (!Number.isFinite(mark) || mark <= 0) continue;
-      totalUnrealized[position.collateral] +=
-        (mark - position.entryPrice) * position.size;
-    }
+    const unrealizedByCollateral: Record<Collateral, number> = {
+      USDC: 0,
+      USDT: 0,
+    };
+    const marginUsedByCollateral: Record<Collateral, number> = {
+      USDC: 0,
+      USDT: 0,
+    };
+    let totalUnrealized = 0;
+    let totalMarginUsed = 0;
 
     for (const position of activePositions) {
       const mark = getMarkPriceForSymbol(position.symbol);
       if (!Number.isFinite(mark) || mark <= 0) continue;
-      if (!shouldTriggerAdl(position, mark, totalUnrealized)) continue;
+      const pnl = (mark - position.entryPrice) * position.size;
+      unrealizedByCollateral[position.collateral] += pnl;
+      totalUnrealized += pnl;
+      if (position.leverage <= 0) continue;
+      const absSize = Math.abs(position.size);
+      if (absSize <= 0) continue;
+      const marginUsed = (absSize * mark) / position.leverage;
+      marginUsedByCollateral[position.collateral] += marginUsed;
+      totalMarginUsed += marginUsed;
+    }
+
+    const totalPerpsBalance =
+      (perpsBalances().USDC ?? 0) + (perpsBalances().USDT ?? 0);
+    const weightedSpotEquity = getWeightedSpotEquity();
+    const totals = {
+      portfolioMarginEnabled: isPortfolioMarginEnabled(),
+      totalUnrealized,
+      totalMarginUsed,
+      totalPerpsBalance,
+      weightedSpotEquity,
+      unrealizedByCollateral,
+      marginUsedByCollateral,
+    };
+
+    for (const position of activePositions) {
+      const mark = getMarkPriceForSymbol(position.symbol);
+      if (!Number.isFinite(mark) || mark <= 0) continue;
+      if (!shouldTriggerAdl(position, mark, totals)) continue;
       void triggerAdlReduction(position, mark);
     }
   });
@@ -451,32 +503,64 @@ export const getPositionForSymbol = (symbol: string) =>
   positions().find((pos) => pos.symbol === symbol);
 
 export const getAvailableBalance = (collateral: Collateral) => {
+  if (isPortfolioMarginEnabled()) {
+    const collateralPool =
+      getTotalPerpsBalance() +
+      getWeightedSpotEquity() +
+      getTotalUnrealizedPnl();
+    const marginUsed = getTotalMarginUsed();
+    return Math.max(collateralPool - marginUsed, 0);
+  }
+
   const balance = perpsBalances()[collateral] ?? 0;
   const marginUsed = positions()
     .filter((pos) => pos.collateral === collateral)
     .reduce((sum, pos) => {
       const mark = getMarkPriceForSymbol(pos.symbol);
       if (!Number.isFinite(mark) || mark <= 0 || pos.leverage <= 0) return sum;
-      // Account for spot collateral - only unhedged portion uses USDC margin
-      const spotCollateral = pos.spotCollateralSize ?? 0;
-      const unhedgedSize = Math.max(0, Math.abs(pos.size) - spotCollateral);
-      const notional = unhedgedSize * mark;
+      const notional = Math.abs(pos.size) * mark;
       return sum + notional / pos.leverage;
     }, 0);
   return Math.max(balance - marginUsed, 0);
 };
 
 // Portfolio Margin helpers
-export const isPortfolioMarginEnabled = () => {
+export function isPortfolioMarginEnabled() {
   const status = portfolioMarginStatus();
   return status?.enabled ?? false;
-};
+}
 
-export const getHedgingStatusForSymbol = (symbol: string) => {
-  const status = portfolioMarginStatus();
-  if (!status) return null;
-  return status.hedgingStatus.find((h) => h.symbol === symbol) ?? null;
-};
+export function getWeightedSpotEquity() {
+  if (!isPortfolioMarginEnabled()) return 0;
+  const breakdown = portfolioMarginStatus()?.collateral?.spot ?? [];
+  return breakdown.reduce((sum, item) => {
+    const price = Number.isFinite(item.price) ? item.price : 0;
+    const weight = Number.isFinite(item.weight) ? item.weight : 0;
+    return sum + item.balance * price * weight;
+  }, 0);
+}
+
+export function getTotalPerpsBalance() {
+  return (perpsBalances().USDC ?? 0) + (perpsBalances().USDT ?? 0);
+}
+
+export function getTotalUnrealizedPnl() {
+  return positions().reduce((sum, position) => {
+    const mark = getMarkPriceForSymbol(position.symbol);
+    if (!Number.isFinite(mark) || mark <= 0) return sum;
+    return sum + (mark - position.entryPrice) * position.size;
+  }, 0);
+}
+
+export function getTotalMarginUsed() {
+  return positions().reduce((sum, position) => {
+    const mark = getMarkPriceForSymbol(position.symbol);
+    if (!Number.isFinite(mark) || mark <= 0 || position.leverage <= 0) {
+      return sum;
+    }
+    return sum + (Math.abs(position.size) * mark) / position.leverage;
+  }, 0);
+}
 
 export const togglePortfolioMargin = async (
   enabled: boolean,
@@ -488,7 +572,7 @@ export const togglePortfolioMargin = async (
     await convex.mutation(api.portfolioMargin.togglePortfolioMargin, {
       enabled,
     });
-    // Recalculate spot collateral for all positions
+    // Clear legacy per-position spot collateral data
     await convex.mutation(api.portfolioMargin.recalculateSpotCollateral, {});
     return { ok: true };
   } catch (error) {
@@ -535,6 +619,14 @@ export const placeOrder = async ({
     return { ok: false, error: "Mark price unavailable." };
   }
 
+  const markPrices: Record<string, number> = {};
+  for (const position of positions()) {
+    const positionMark = getMarkPriceForSymbol(position.symbol);
+    if (Number.isFinite(positionMark) && positionMark > 0) {
+      markPrices[position.symbol] = positionMark;
+    }
+  }
+
   try {
     await convex.mutation(api.orders.placePerpsOrder, {
       symbol,
@@ -546,6 +638,7 @@ export const placeOrder = async ({
       collateral,
       marginType,
       markPrice: mark,
+      markPrices,
     });
     return { ok: true };
   } catch (error) {

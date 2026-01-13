@@ -5,22 +5,36 @@ import { isAuthenticated } from "./auth";
 
 export type SpotAsset =
   | "USDC"
+  | "USDT"
   | "BTC"
+  | "ETH"
+  | "SOL"
   | "HYPE"
+  | "BNB"
+  | "XRP"
   | "ADA"
   | "DOGE"
+  | "AVAX"
   | "LINK"
   | "DOT"
+  | "LTC"
   | "ATOM";
 
 export const SPOT_ASSETS: SpotAsset[] = [
   "USDC",
+  "USDT",
   "BTC",
+  "ETH",
+  "SOL",
   "HYPE",
+  "BNB",
+  "XRP",
   "ADA",
   "DOGE",
+  "AVAX",
   "LINK",
   "DOT",
+  "LTC",
   "ATOM",
 ];
 
@@ -77,7 +91,12 @@ const {
   };
 });
 
-export { transferModalOpen, transferDirection, openTransferModal, closeTransferModal };
+export {
+  transferModalOpen,
+  transferDirection,
+  openTransferModal,
+  closeTransferModal,
+};
 
 export const getSpotBalance = (asset: SpotAsset) => spotBalances()[asset] ?? 0;
 
@@ -137,8 +156,7 @@ export const transferUSDC = async ({
     await convex.mutation(api.spot.transferUSDC, { amount, direction });
     return { ok: true };
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Transfer failed.";
+    const message = error instanceof Error ? error.message : "Transfer failed.";
     console.error("Failed to transfer USDC:", error);
     return { ok: false, error: message };
   }

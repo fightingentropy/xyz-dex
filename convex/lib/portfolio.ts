@@ -1,97 +1,36 @@
-import type { Doc, Id } from "../_generated/dataModel";
+import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 // ============================================================================
-// Portfolio Margin Helpers
+// Portfolio Margin Collateral Helpers
 // ============================================================================
 
-/**
- * Calculate how much of a short position can be collateralized by spot holdings.
- * Only short positions (negative size) can be spot-collateralized.
- *
- * @param spotBalance - Amount of spot asset held (e.g., 200 HYPE)
- * @param positionSize - Position size, negative for shorts (e.g., -300)
- * @returns Amount that can be spot-collateralized (e.g., 200)
- */
-export const calculateSpotCollateralForPosition = (
-  spotBalance: number,
-  positionSize: number,
-): number => {
-  if (positionSize >= 0) return 0; // Only shorts can be spot-collateralized
-  const shortSize = Math.abs(positionSize);
-  return Math.min(spotBalance, shortSize);
+export const COLLATERAL_WEIGHTS: Record<string, number> = {
+  USDC: 1,
+  USDT: 1,
+  BTC: 0.95,
+  ETH: 0.9,
+  SOL: 0.85,
+  HYPE: 0.75,
+  BNB: 0.9,
+  XRP: 0.8,
+  ADA: 0.8,
+  DOGE: 0.7,
+  AVAX: 0.8,
+  LINK: 0.85,
+  DOT: 0.8,
+  LTC: 0.85,
+  ATOM: 0.8,
 };
 
-/**
- * Calculate the unhedged portion of a position that requires USDC margin.
- *
- * @param positionSize - Total position size (negative for shorts)
- * @param spotCollateralSize - Amount backed by spot holdings
- * @returns Unhedged size requiring USDC collateral
- */
-export const calculateUnhedgedSize = (
-  positionSize: number,
-  spotCollateralSize: number,
-): number => {
-  return Math.max(0, Math.abs(positionSize) - spotCollateralSize);
-};
-
-/**
- * Calculate margin required for a position, accounting for spot collateral.
- * Spot-collateralized portion requires no USDC margin.
- *
- * @param position - The position document
- * @param markPrice - Current mark price of the asset
- * @returns Margin required in USDC
- */
-export const calculatePositionMarginWithSpotCollateral = (
-  position: { size: number; leverage: number; spotCollateralSize?: number },
-  markPrice: number,
-): number => {
-  if (position.leverage <= 0 || !Number.isFinite(markPrice) || markPrice <= 0) {
-    return 0;
-  }
-
-  const spotCollateral = position.spotCollateralSize ?? 0;
-  const unhedgedSize = calculateUnhedgedSize(position.size, spotCollateral);
-
-  // Only the unhedged portion requires USDC margin
-  return (unhedgedSize * markPrice) / position.leverage;
-};
-
-/**
- * Get spot balance for a specific asset.
- */
-export const getSpotBalanceForAsset = async (
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<"users">,
-  asset: string,
-): Promise<number> => {
-  const balance = await ctx.db
-    .query("spotBalances")
-    .withIndex("by_user_asset", (q) =>
-      q.eq("userId", userId).eq("asset", asset),
-    )
-    .unique();
-  return balance?.balance ?? 0;
-};
-
-/**
- * Check if a user has portfolio margin enabled.
- */
-export const isPortfolioMarginEnabled = async (
-  ctx: QueryCtx | MutationCtx,
-  userId: Id<"users">,
-): Promise<boolean> => {
-  const user = await ctx.db.get(userId);
-  return user?.portfolioMarginEnabled ?? false;
-};
+export const getCollateralWeight = (asset: string) =>
+  COLLATERAL_WEIGHTS[asset] ?? 0;
 
 // ============================================================================
 // Demo Prices & Equity Calculations
 // ============================================================================
 
-const DEMO_PRICES: Record<string, number> = {
+export const DEMO_PRICES: Record<string, number> = {
   USDC: 1,
   USDT: 1,
   BTC: 68435,
@@ -109,7 +48,37 @@ const DEMO_PRICES: Record<string, number> = {
   ATOM: 9.58,
 };
 
-const getDemoPrice = (asset: string) => DEMO_PRICES[asset] ?? 0;
+export const getDemoPrice = (asset: string) => DEMO_PRICES[asset] ?? 0;
+
+export const getWeightedSpotEquityBreakdown = async (
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users">,
+) => {
+  const balances = await ctx.db
+    .query("spotBalances")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .collect();
+  return balances.map((balance) => {
+    const price = getDemoPrice(balance.asset);
+    const weight = getCollateralWeight(balance.asset);
+    const weightedValue = balance.balance * price * weight;
+    return {
+      asset: balance.asset,
+      balance: balance.balance,
+      price,
+      weight,
+      weightedValue,
+    };
+  });
+};
+
+export const calculateWeightedSpotEquity = async (
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users">,
+) => {
+  const breakdown = await getWeightedSpotEquityBreakdown(ctx, userId);
+  return breakdown.reduce((sum, item) => sum + item.weightedValue, 0);
+};
 
 export const calculatePerpsEquity = async (
   ctx: QueryCtx | MutationCtx,
@@ -134,6 +103,17 @@ export const calculateSpotEquity = async (
     (sum, balance) => sum + balance.balance * getDemoPrice(balance.asset),
     0,
   );
+};
+
+/**
+ * Check if a user has portfolio margin enabled.
+ */
+export const isPortfolioMarginEnabled = async (
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users">,
+): Promise<boolean> => {
+  const user = await ctx.db.get(userId);
+  return user?.portfolioMarginEnabled ?? false;
 };
 
 export const updatePortfolioMetrics = async (

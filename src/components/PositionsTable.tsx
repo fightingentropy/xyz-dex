@@ -4,8 +4,13 @@ import {
   Collateral,
   Position,
   closePosition,
+  getTotalMarginUsed,
+  getTotalPerpsBalance,
+  getTotalUnrealizedPnl,
+  getWeightedSpotEquity,
   getBalance,
   getMarkPriceForSymbol,
+  isPortfolioMarginEnabled,
   positions,
   updatePositionTpsl,
 } from "../stores/clob";
@@ -71,6 +76,21 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
     }
     return totals;
   });
+  const marginUsedByCollateral = createMemo(() => {
+    const totals: Record<Collateral, number> = { USDC: 0, USDT: 0 };
+    for (const position of positions()) {
+      if (position.leverage <= 0) continue;
+      const mark = getMarkPriceForSymbol(position.symbol);
+      if (!Number.isFinite(mark) || mark <= 0) continue;
+      totals[position.collateral] +=
+        (Math.abs(position.size) * mark) / position.leverage;
+    }
+    return totals;
+  });
+  const totalUnrealized = createMemo(() => getTotalUnrealizedPnl());
+  const totalMarginUsed = createMemo(() => getTotalMarginUsed());
+  const totalPerpsBalance = createMemo(() => getTotalPerpsBalance());
+  const weightedSpotEquity = createMemo(() => getWeightedSpotEquity());
   const goToTrade = (symbol: string) => {
     setCurrentSymbol(symbol);
     setCurrentPage("trade");
@@ -167,22 +187,13 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                 };
                 const positionValue = () => Math.abs(position.size) * mark();
 
-                // Portfolio margin: calculate hedged vs unhedged portions
-                const spotCollateral = position.spotCollateralSize ?? 0;
                 const isShort = position.size < 0;
-                const hedgedSize = isShort ? spotCollateral : 0;
-                const unhedgedSize = Math.max(
-                  0,
-                  Math.abs(position.size) - hedgedSize,
-                );
-                const isFullyHedged = hedgedSize > 0 && unhedgedSize <= 0;
-                const isPartiallyHedged = hedgedSize > 0 && unhedgedSize > 0;
+                const absSize = () => Math.abs(position.size);
 
-                // Margin calculation: only unhedged portion requires USDC margin
+                // Margin calculation: notional / leverage
                 const margin = () => {
                   if (position.leverage <= 0) return 0;
-                  const unhedgedValue = unhedgedSize * mark();
-                  return unhedgedValue / position.leverage;
+                  return (absSize() * mark()) / position.leverage;
                 };
 
                 const pnl = () =>
@@ -191,7 +202,7 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                 const marginType = position.marginType ?? "cross";
                 const marginLabel =
                   marginType === "cross" ? "Cross" : "Isolated";
-                const totalUnrealized = () =>
+                const collateralUnrealized = () =>
                   unrealizedByCollateral()[position.collateral] ?? 0;
                 const currentUnrealized = () => {
                   const m = mark();
@@ -199,31 +210,47 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                     ? (m - position.entryPrice) * position.size
                     : 0;
                 };
-                const baseEquity = () =>
-                  getBalance(position.collateral) +
-                  (totalUnrealized() - currentUnrealized());
+                const marginUsedExcludingCurrent = () => {
+                  const total = isPortfolioMarginEnabled()
+                    ? totalMarginUsed()
+                    : (marginUsedByCollateral()[position.collateral] ?? 0);
+                  const currentMargin = margin();
+                  if (
+                    !Number.isFinite(total) ||
+                    !Number.isFinite(currentMargin)
+                  ) {
+                    return 0;
+                  }
+                  return Math.max(0, total - currentMargin);
+                };
+                const collateralPool = () => {
+                  if (isPortfolioMarginEnabled()) {
+                    return (
+                      totalPerpsBalance() +
+                      weightedSpotEquity() +
+                      totalUnrealized()
+                    );
+                  }
+                  return (
+                    getBalance(position.collateral) + collateralUnrealized()
+                  );
+                };
+                const baseEquity = () => collateralPool() - currentUnrealized();
 
-                // Liquidation price calculation accounting for spot collateral
+                // Liquidation price calculation for cross/isolated margin
                 const liqPrice = () => {
-                  // Fully hedged positions have no liquidation risk
-                  if (isFullyHedged) return null;
-
-                  // For partially hedged or unhedged positions
                   if (marginType === "cross") {
-                    // Cross margin: use account equity for unhedged portion
-                    const equity = baseEquity();
-                    if (!Number.isFinite(equity) || unhedgedSize === 0)
-                      return NaN;
+                    // Cross margin: use account equity for the position
+                    const equity = baseEquity() - marginUsedExcludingCurrent();
+                    if (!Number.isFinite(equity) || absSize() === 0) return NaN;
                     // For shorts, liq price is entry + equity/size (price going up)
                     // For longs, liq price is entry - equity/size (price going down)
                     if (isShort) {
-                      return position.entryPrice + equity / unhedgedSize;
+                      return position.entryPrice + equity / absSize();
                     }
-                    return (
-                      position.entryPrice - equity / Math.abs(position.size)
-                    );
+                    return position.entryPrice - equity / absSize();
                   } else {
-                    // Isolated margin: use leverage factor for unhedged portion
+                    // Isolated margin: use leverage factor for the position
                     const liqFactor =
                       position.leverage > 0 ? 1 / position.leverage : 0;
                     if (isShort) {
@@ -275,16 +302,6 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                         <span class="text-xs text-brand-slate-400">
                           {position.leverage}x
                         </span>
-                        <Show when={isFullyHedged}>
-                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-medium">
-                            HEDGED
-                          </span>
-                        </Show>
-                        <Show when={isPartiallyHedged}>
-                          <span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-medium">
-                            PARTIAL
-                          </span>
-                        </Show>
                       </div>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
@@ -316,27 +333,17 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                         class={`font-mono ${hasValidPrice() ? (pnl() >= 0 ? "text-brand-green-400" : "text-brand-red-400") : "text-brand-slate-400"}`}
                       >
                         {hasValidPrice()
-                          ? `${formatSignedUsd(pnl())} (${isFullyHedged ? "∞" : roe().toFixed(2)}%)`
+                          ? `${formatSignedUsd(pnl())} (${roe().toFixed(2)}%)`
                           : "--"}
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>
                       <span class="font-mono">
-                        <Show
-                          when={!isFullyHedged}
-                          fallback={
-                            <span class="text-emerald-400 font-medium">
-                              None
-                            </span>
-                          }
-                        >
-                          {hasValidPrice() &&
-                          liqPrice() !== null &&
-                          Number.isFinite(liqPrice()) &&
-                          (liqPrice() as number) > 0
-                            ? formatPrice(liqPrice() as number)
-                            : "--"}
-                        </Show>
+                        {hasValidPrice() &&
+                        Number.isFinite(liqPrice()) &&
+                        (liqPrice() as number) > 0
+                          ? formatPrice(liqPrice() as number)
+                          : "--"}
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>

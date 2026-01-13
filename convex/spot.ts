@@ -3,10 +3,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { getAuthUser, requireAuthUser } from "./lib/auth";
-import {
-  calculateSpotCollateralForPosition,
-  updatePortfolioMetrics,
-} from "./lib/portfolio";
+import { updatePortfolioMetrics } from "./lib/portfolio";
 
 const getSpotBalance = async (
   ctx: MutationCtx,
@@ -37,47 +34,6 @@ const upsertSpotBalance = async (
     });
   } else {
     await ctx.db.patch(existing._id, { balance, updatedAt: now });
-  }
-
-  // Update spot collateral on perp positions for this asset
-  await updateSpotCollateralForAsset(ctx, userId, asset, balance);
-};
-
-/**
- * When spot balance changes, update the spotCollateralSize on any perp positions
- * of the same symbol. This ensures hedging status stays in sync.
- */
-const updateSpotCollateralForAsset = async (
-  ctx: MutationCtx,
-  userId: Id<"users">,
-  asset: string,
-  newSpotBalance: number,
-) => {
-  // Check if portfolio margin is enabled
-  const user = await ctx.db.get(userId);
-  const portfolioMarginEnabled = user?.portfolioMarginEnabled ?? false;
-
-  // Find any perp position for this symbol
-  const position = await ctx.db
-    .query("positions")
-    .withIndex("by_user_symbol", (q) =>
-      q.eq("userId", userId).eq("symbol", asset),
-    )
-    .unique();
-
-  if (!position) return;
-
-  // Calculate new spot collateral
-  const newSpotCollateral = portfolioMarginEnabled
-    ? calculateSpotCollateralForPosition(newSpotBalance, position.size)
-    : 0;
-
-  // Only update if changed
-  if ((position.spotCollateralSize ?? 0) !== newSpotCollateral) {
-    await ctx.db.patch(position._id, {
-      spotCollateralSize: newSpotCollateral,
-      updatedAt: Date.now(),
-    });
   }
 };
 

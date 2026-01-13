@@ -17,6 +17,10 @@ import {
   getBalance,
   getMarkPriceForSymbol,
   getPositionForSymbol,
+  getTotalMarginUsed,
+  getTotalPerpsBalance,
+  getTotalUnrealizedPnl,
+  getWeightedSpotEquity,
   isPortfolioMarginEnabled,
   placeOrder,
   positions,
@@ -25,7 +29,6 @@ import {
 } from "../stores/clob";
 import { isAuthenticated } from "../stores/auth";
 import { getSpotBalance, isSpotAsset, placeSpotOrder } from "../stores/wallet";
-import { portfolioMetrics } from "../stores/portfolio";
 
 type OrderSide = "long" | "short";
 type OrderType = "market" | "limit";
@@ -126,41 +129,20 @@ const OrderForm: Component = () => {
     const price = orderPrice();
     return Number.isFinite(price) ? orderSize() * price : 0;
   });
-  // Portfolio margin: calculate spot collateral for short orders
-  const spotBalanceForSymbol = createMemo(() => {
-    if (isSpot()) return 0;
-    const symbol = currentSymbol();
-    return isSpotAsset(symbol) ? getSpotBalance(symbol) : 0;
-  });
-
-  const willUseSpotCollateral = createMemo(() => {
-    if (isSpot() || isLong()) return false;
-    return isPortfolioMarginEnabled() && spotBalanceForSymbol() > 0;
-  });
-
-  const spotCollateralAmount = createMemo(() => {
-    if (!willUseSpotCollateral()) return 0;
-    const shortSize = orderSize();
-    const spotBalance = spotBalanceForSymbol();
-    return Math.min(spotBalance, shortSize);
-  });
-
-  const unhedgedSize = createMemo(() => {
-    if (!willUseSpotCollateral()) return orderSize();
-    return Math.max(0, orderSize() - spotCollateralAmount());
-  });
-
-  const isFullyHedgedPreview = createMemo(() => {
-    return willUseSpotCollateral() && unhedgedSize() <= 0 && orderSize() > 0;
-  });
 
   const marginRequired = createMemo(() => {
     if (isSpot()) return 0;
     if (orderValue() <= 0 || effectiveLeverage() <= 0) return 0;
-    // Only unhedged portion requires USDC margin
-    const unhedgedValue = unhedgedSize() * orderPrice();
-    return unhedgedValue / effectiveLeverage();
+    return orderValue() / effectiveLeverage();
   });
+  const calculateMarginUsed = (
+    size: number,
+    leverageValue: number,
+    price: number,
+  ) => {
+    if (!Number.isFinite(price) || price <= 0 || leverageValue <= 0) return 0;
+    return (Math.abs(size) * price) / leverageValue;
+  };
 
   const signedOrderSize = createMemo(() => {
     const size = orderSize();
@@ -170,66 +152,50 @@ const OrderForm: Component = () => {
 
   const currentMarginUsed = createMemo(() => {
     if (isSpot()) return 0;
-    const col = collateral();
-    return positions()
-      .filter((pos) => pos.collateral === col)
-      .reduce((sum, pos) => {
-        if (pos.leverage <= 0) return sum;
-        if (!Number.isFinite(pos.entryPrice) || pos.entryPrice <= 0) {
-          return sum;
-        }
-        const spotCollateral = pos.spotCollateralSize ?? 0;
-        const unhedgedSize = Math.max(0, Math.abs(pos.size) - spotCollateral);
-        return sum + (unhedgedSize * pos.entryPrice) / pos.leverage;
-      }, 0);
+    const usePortfolio = isPortfolioMarginEnabled();
+    const relevantPositions = usePortfolio
+      ? positions()
+      : positions().filter((pos) => pos.collateral === collateral());
+    return relevantPositions.reduce((sum, pos) => {
+      if (pos.leverage <= 0) return sum;
+      const price = getMarkPriceForSymbol(pos.symbol);
+      return sum + calculateMarginUsed(pos.size, pos.leverage, price);
+    }, 0);
   });
 
   const nextMarginUsed = createMemo(() => {
     if (isSpot()) return 0;
-    const col = collateral();
     const signedSize = signedOrderSize();
     const markPrice = mark();
     const nextLeverage = leverage();
-    const portfolioEnabled = isPortfolioMarginEnabled();
-    const spotBalance = spotBalanceForSymbol();
     let marginUsed = 0;
     let applied = false;
+    const usePortfolio = isPortfolioMarginEnabled();
+    const relevantPositions = usePortfolio
+      ? positions()
+      : positions().filter((pos) => pos.collateral === collateral());
 
-    for (const position of positions().filter(
-      (pos) => pos.collateral === col,
-    )) {
+    for (const position of relevantPositions) {
       let nextSize = position.size;
       let leverageValue = position.leverage;
-      let price = position.entryPrice;
-      let spotCollateral = position.spotCollateralSize ?? 0;
 
       if (position.symbol === currentSymbol()) {
         applied = true;
         nextSize = position.size + signedSize;
         leverageValue = nextLeverage;
-        price = markPrice;
-        if (portfolioEnabled) {
-          spotCollateral =
-            nextSize < 0 ? Math.min(spotBalance, Math.abs(nextSize)) : 0;
-        } else {
-          spotCollateral = 0;
-        }
       }
 
       if (nextSize === 0 || leverageValue <= 0) continue;
-      if (!Number.isFinite(price) || price <= 0) continue;
-      const unhedgedSize = Math.max(0, Math.abs(nextSize) - spotCollateral);
-      marginUsed += (unhedgedSize * price) / leverageValue;
+      const price =
+        position.symbol === currentSymbol()
+          ? markPrice
+          : getMarkPriceForSymbol(position.symbol);
+      marginUsed += calculateMarginUsed(nextSize, leverageValue, price);
     }
 
     if (!applied && signedSize !== 0) {
       if (nextLeverage > 0 && Number.isFinite(markPrice) && markPrice > 0) {
-        const spotCollateral =
-          portfolioEnabled && signedSize < 0
-            ? Math.min(spotBalance, Math.abs(signedSize))
-            : 0;
-        const unhedgedSize = Math.max(0, Math.abs(signedSize) - spotCollateral);
-        marginUsed += (unhedgedSize * markPrice) / nextLeverage;
+        marginUsed += (Math.abs(signedSize) * markPrice) / nextLeverage;
       }
     }
 
@@ -246,6 +212,10 @@ const OrderForm: Component = () => {
     }
     return totals;
   });
+  const totalUnrealized = createMemo(() => getTotalUnrealizedPnl());
+  const totalMarginUsed = createMemo(() => getTotalMarginUsed());
+  const totalPerpsBalance = createMemo(() => getTotalPerpsBalance());
+  const weightedSpotEquity = createMemo(() => getWeightedSpotEquity());
 
   const currentPositionUnrealized = createMemo(() => {
     const position = currentPosition();
@@ -253,6 +223,30 @@ const OrderForm: Component = () => {
     const currentMark = getMarkPriceForSymbol(position.symbol);
     if (!Number.isFinite(currentMark) || currentMark <= 0) return 0;
     return (currentMark - position.entryPrice) * position.size;
+  });
+
+  const otherMarginUsedByCollateral = createMemo(() => {
+    const totals: Record<Collateral, number> = { USDC: 0, USDT: 0 };
+    const current = currentSymbol();
+    for (const position of positions()) {
+      if (position.symbol === current) continue;
+      const price = getMarkPriceForSymbol(position.symbol);
+      if (!Number.isFinite(price) || price <= 0) continue;
+      totals[position.collateral] += calculateMarginUsed(
+        position.size,
+        position.leverage,
+        price,
+      );
+    }
+    return totals;
+  });
+  const otherMarginUsedTotal = createMemo(() => {
+    const current = currentSymbol();
+    return positions().reduce((sum, position) => {
+      if (position.symbol === current) return sum;
+      const price = getMarkPriceForSymbol(position.symbol);
+      return sum + calculateMarginUsed(position.size, position.leverage, price);
+    }, 0);
   });
 
   const previewPosition = createMemo(() => {
@@ -325,24 +319,6 @@ const OrderForm: Component = () => {
     };
   });
 
-  const previewSpotCollateral = createMemo(() => {
-    if (!isPortfolioMarginEnabled()) return 0;
-    const position = previewPosition();
-    if (!position || position.size >= 0) return 0;
-    const existing = currentPosition();
-    if (signedOrderSize() === 0 && existing?.spotCollateralSize != null) {
-      return existing.spotCollateralSize ?? 0;
-    }
-    const balance = spotBalanceForSymbol();
-    return Math.min(balance, Math.abs(position.size));
-  });
-
-  const previewUnhedgedSize = createMemo(() => {
-    const position = previewPosition();
-    if (!position) return 0;
-    return Math.max(0, Math.abs(position.size) - previewSpotCollateral());
-  });
-
   const realizedPnlDelta = createMemo(() => {
     const position = currentPosition();
     const signedSize = signedOrderSize();
@@ -362,18 +338,25 @@ const OrderForm: Component = () => {
   const baseEquity = createMemo(() => {
     const position = previewPosition();
     const col = position?.collateral ?? collateral();
-    const totalUnrealized = unrealizedByCollateral()[col] ?? 0;
+    const realizedDelta = realizedPnlDelta();
+    if (isPortfolioMarginEnabled()) {
+      return (
+        totalPerpsBalance() +
+        weightedSpotEquity() +
+        totalUnrealized() -
+        currentPositionUnrealized() +
+        realizedDelta -
+        otherMarginUsedTotal()
+      );
+    }
+    const collateralUnrealized = unrealizedByCollateral()[col] ?? 0;
+    const otherMarginUsed = otherMarginUsedByCollateral()[col] ?? 0;
     return (
       getBalance(col) +
-      (totalUnrealized - currentPositionUnrealized()) +
-      realizedPnlDelta()
+      (collateralUnrealized - currentPositionUnrealized()) +
+      realizedDelta -
+      otherMarginUsed
     );
-  });
-
-  const isLiquidationHedged = createMemo(() => {
-    const position = previewPosition();
-    if (!position || position.size >= 0) return false;
-    return previewSpotCollateral() > 0 && previewUnhedgedSize() <= 0;
   });
 
   const liquidationPreview = createMemo(() => {
@@ -382,7 +365,6 @@ const OrderForm: Component = () => {
     if (!position || position.size === 0) return "--";
     const entryPrice = position.entryPrice;
     if (!Number.isFinite(entryPrice) || entryPrice <= 0) return "--";
-    if (isLiquidationHedged()) return "None";
 
     const isShort = position.size < 0;
     if (position.marginType === "isolated") {
@@ -397,7 +379,7 @@ const OrderForm: Component = () => {
     }
 
     const equity = baseEquity();
-    const denom = isShort ? previewUnhedgedSize() : Math.abs(position.size);
+    const denom = Math.abs(position.size);
     if (!Number.isFinite(equity) || denom <= 0) return "--";
     const liq = isShort
       ? entryPrice + equity / denom
@@ -429,14 +411,16 @@ const OrderForm: Component = () => {
   const insufficientMargin = createMemo(() => {
     if (isSpot()) return false;
     if (!isOrderValid()) return false;
-    const balance = getBalance(collateral());
+    const collateralPool = isPortfolioMarginEnabled()
+      ? totalPerpsBalance() + weightedSpotEquity() + totalUnrealized()
+      : getBalance(collateral());
     const nextUsed = nextMarginUsed();
     const currentUsed = currentMarginUsed();
-    if (!Number.isFinite(balance)) return false;
+    if (!Number.isFinite(collateralPool)) return false;
     if (!Number.isFinite(nextUsed) || !Number.isFinite(currentUsed)) {
       return false;
     }
-    return nextUsed > balance && nextUsed >= currentUsed;
+    return nextUsed > collateralPool && nextUsed >= currentUsed;
   });
 
   const canSubmitOrder = createMemo(
@@ -538,37 +522,17 @@ const OrderForm: Component = () => {
   );
   const longLabel = createMemo(() => (isSpot() ? "Buy" : "Buy / Long"));
   const shortLabel = createMemo(() => (isSpot() ? "Sell" : "Sell / Short"));
-  const metrics = createMemo(() => portfolioMetrics());
-  const perpsBalance = createMemo(
-    () => getBalance("USDC") + getBalance("USDT"),
+  const perpsBalance = createMemo(() => totalPerpsBalance());
+  const spotCollateralValue = createMemo(() =>
+    isPortfolioMarginEnabled() ? weightedSpotEquity() : 0,
   );
-  const spotEquity = createMemo(() => metrics()?.spotEquity ?? 0);
-  const perpsEquity = createMemo(
-    () => metrics()?.perpsEquity ?? perpsBalance(),
+  const unrealizedPnl = createMemo(() => totalUnrealized());
+  const marginUsed = createMemo(() => totalMarginUsed());
+  const collateralPool = createMemo(
+    () => perpsBalance() + spotCollateralValue() + unrealizedPnl(),
   );
-  const unrealizedPnl = createMemo(() => {
-    return positions().reduce((sum, position) => {
-      const currentMark = getMarkPriceForSymbol(position.symbol);
-      if (!Number.isFinite(currentMark) || currentMark <= 0) return sum;
-      return sum + (currentMark - position.entryPrice) * position.size;
-    }, 0);
-  });
-  const marginUsed = createMemo(() => {
-    return positions().reduce((sum, position) => {
-      const currentMark = getMarkPriceForSymbol(position.symbol);
-      if (
-        !Number.isFinite(currentMark) ||
-        currentMark <= 0 ||
-        position.leverage <= 0
-      ) {
-        return sum;
-      }
-      const notional = Math.abs(position.size) * currentMark;
-      return sum + notional / position.leverage;
-    }, 0);
-  });
   const crossMarginRatio = createMemo(() => {
-    const equity = perpsEquity();
+    const equity = collateralPool();
     if (!Number.isFinite(equity) || equity <= 0) return 0;
     return (marginUsed() / equity) * 100;
   });
@@ -828,8 +792,8 @@ const OrderForm: Component = () => {
                         </Show>
                       </div>
                       <p class="mt-1 text-sm text-brand-slate-400">
-                        Standard margin mode. All perp positions are
-                        collateralized with USDC only.
+                        Standard margin mode. Perp positions use only perps
+                        balances for collateral (no spot assets).
                       </p>
                     </button>
 
@@ -857,8 +821,8 @@ const OrderForm: Component = () => {
                         </Show>
                       </div>
                       <p class="mt-1 text-sm text-brand-slate-400">
-                        Spot holdings collateralize short perps, reducing
-                        liquidation risk.
+                        Spot holdings join a cross-asset collateral pool with
+                        haircuts, shared across all perp positions.
                       </p>
                     </button>
 
@@ -1144,55 +1108,6 @@ const OrderForm: Component = () => {
           <div class="text-xs text-brand-red-400">{orderError()}</div>
         </Show>
 
-        {/* Spot Collateral Preview for Short Orders */}
-        <Show when={willUseSpotCollateral() && orderSize() > 0}>
-          <div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 space-y-2">
-            <div class="flex items-center gap-2">
-              <svg
-                class="w-4 h-4 text-emerald-400"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-              </svg>
-              <span class="text-sm font-medium text-emerald-400">
-                Portfolio Margin Active
-              </span>
-            </div>
-            <div class="text-xs text-emerald-300/80 space-y-1">
-              <Show when={isFullyHedgedPreview()}>
-                <p>
-                  <span class="font-semibold">
-                    {spotCollateralAmount().toFixed(4)} {currentSymbol()}
-                  </span>{" "}
-                  spot will collateralize this short position.
-                </p>
-                <p class="text-emerald-400 font-medium">
-                  Delta neutral - No liquidation risk
-                </p>
-              </Show>
-              <Show when={!isFullyHedgedPreview()}>
-                <p>
-                  <span class="font-semibold">
-                    {spotCollateralAmount().toFixed(4)} {currentSymbol()}
-                  </span>{" "}
-                  spot collateral +{" "}
-                  <span class="font-semibold">
-                    {formatUsd(marginRequired())}
-                  </span>{" "}
-                  USDC margin
-                </p>
-                <p>
-                  Hedged: {spotCollateralAmount().toFixed(4)} / Unhedged:{" "}
-                  {unhedgedSize().toFixed(4)} {currentSymbol()}
-                </p>
-              </Show>
-            </div>
-          </div>
-        </Show>
-
         {/* Order Details */}
         <Show
           when={!isSpot()}
@@ -1216,9 +1131,7 @@ const OrderForm: Component = () => {
               <span class="text-brand-slate-500 underline underline-offset-2 decoration-dashed decoration-brand-slate-500">
                 Liquidation Price
               </span>
-              <span
-                class={`font-mono ${isLiquidationHedged() ? "text-emerald-400 font-medium" : "text-slate-100"}`}
-              >
+              <span class="font-mono text-slate-100">
                 {liquidationPreview()}
               </span>
             </div>
@@ -1231,13 +1144,6 @@ const OrderForm: Component = () => {
             <div class="flex justify-between">
               <span class="text-brand-slate-500">Margin Required</span>
               <span class="text-slate-100 font-mono">
-                <Show
-                  when={willUseSpotCollateral() && spotCollateralAmount() > 0}
-                >
-                  <span class="text-emerald-400 text-xs mr-1">
-                    ({spotCollateralAmount().toFixed(2)} {currentSymbol()} spot)
-                  </span>
-                </Show>
                 {marginRequiredDisplay()}
               </span>
             </div>
@@ -1287,7 +1193,7 @@ const OrderForm: Component = () => {
           <div class="flex justify-between text-sm">
             <span class="text-brand-slate-500">Balance</span>
             <span class="font-mono text-slate-100">
-              {formatUsd(perpsBalance() + spotEquity())}
+              {formatUsd(perpsBalance() + spotCollateralValue())}
             </span>
           </div>
           <div class="flex justify-between text-sm">

@@ -8,7 +8,7 @@ export default defineSchema({
     email: v.optional(v.string()),
     isAdmin: v.optional(v.boolean()),
     deviceId: v.optional(v.string()), // Legacy field for old documents
-    portfolioMarginEnabled: v.optional(v.boolean()), // Enable spot-collateralized perps
+    portfolioMarginEnabled: v.optional(v.boolean()), // Enable cross-asset portfolio margin
     createdAt: v.number(),
     lastSeenAt: v.number(),
   }).index("by_token", ["tokenIdentifier"]),
@@ -69,7 +69,7 @@ export default defineSchema({
     leverage: v.number(),
     collateral: v.union(v.literal("USDC"), v.literal("USDT")),
     marginType: v.optional(v.union(v.literal("isolated"), v.literal("cross"))),
-    spotCollateralSize: v.optional(v.number()), // Amount of position backed by spot holdings
+    spotCollateralSize: v.optional(v.number()), // Legacy: spot-hedged size (unused)
     takeProfit: v.optional(v.union(v.number(), v.null())),
     stopLoss: v.optional(v.union(v.number(), v.null())),
     realizedPnl: v.number(),

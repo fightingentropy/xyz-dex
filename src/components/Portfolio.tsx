@@ -237,9 +237,9 @@ const Portfolio: Component = () => {
               </svg>
               <div class="absolute bottom-full right-0 mb-2 w-64 p-3 bg-brand-surface border border-brand-border rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
                 <p class="text-xs text-brand-slate-300 leading-relaxed">
-                  Enable to use spot holdings as collateral for short perp
-                  positions. Hedged positions (short perp + spot) have reduced
-                  or no liquidation risk.
+                  Enable to add spot holdings (with haircuts) to the shared
+                  collateral pool for all perps. Equity is pooled across assets
+                  when portfolio margin is on.
                 </p>
               </div>
             </div>
