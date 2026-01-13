@@ -407,9 +407,12 @@ const getTrackedAssets = (provider: DataProvider) => {
   const spots = new Set(trackedSpots());
 
   BASELINE_PERPS.forEach((symbol) => perps.add(symbol));
+  watchlistSet.forEach((symbol) => {
+    perps.add(symbol);
+    spots.add(symbol);
+  });
 
   if (perps.size === 0 && spots.size === 0) {
-    watchlistSet.forEach((symbol) => perps.add(symbol));
     if (perps.size === 0) {
       const fallback = untrack(() => currentSymbol());
       if (fallback) perps.add(fallback);
