@@ -117,13 +117,49 @@ const parseNumber = (value: string | number): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const getErrorText = (error: unknown): string => {
+  if (!error) return "";
+  if (typeof error === "string") return error;
+  if (error instanceof Error) {
+    const data = (error as { data?: unknown }).data;
+    if (typeof data === "string") return `${error.message} ${data}`;
+    if (data && typeof data === "object") {
+      const dataMessage = (data as { message?: unknown }).message;
+      if (typeof dataMessage === "string") {
+        return `${error.message} ${dataMessage}`;
+      }
+      try {
+        return `${error.message} ${JSON.stringify(data)}`;
+      } catch {
+        return error.message;
+      }
+    }
+    return error.message;
+  }
+  if (typeof error === "object") {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string") return message;
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "";
+    }
+  }
+  return String(error);
+};
+
 const isMarkPricesValidationError = (error: unknown) => {
-  if (!(error instanceof Error)) return false;
+  const text = getErrorText(error).toLowerCase();
+  if (!text) return false;
   return (
-    error.message.includes("markPrices") &&
-    error.message.includes("not in the validator")
+    text.includes("markprices") &&
+    (text.includes("not in the validator") ||
+      text.includes("extra field") ||
+      text.includes("argumentvalidationerror"))
   );
 };
+
+let markPricesSupported = true;
 
 const [lastPrices, setLastPrices] = createStore<Record<string, number>>({});
 
@@ -458,13 +494,16 @@ createRoot(() => {
     }
 
     if (Object.keys(fundingRates).length > 0) {
+      const includeMarkPrices =
+        markPricesSupported && Object.keys(markPrices).length > 0;
       try {
         await convex.mutation(api.orders.updateFundingForPositions, {
           fundingRates,
-          ...(Object.keys(markPrices).length > 0 ? { markPrices } : {}),
+          ...(includeMarkPrices ? { markPrices } : {}),
         });
       } catch (error) {
         if (isMarkPricesValidationError(error)) {
+          markPricesSupported = false;
           try {
             await convex.mutation(api.orders.updateFundingForPositions, {
               fundingRates,
@@ -659,14 +698,17 @@ export const placeOrder = async ({
   };
 
   try {
+    const includeMarkPrices =
+      markPricesSupported && Object.keys(markPrices).length > 0;
     const orderArgs = {
       ...baseArgs,
-      ...(Object.keys(markPrices).length > 0 ? { markPrices } : {}),
+      ...(includeMarkPrices ? { markPrices } : {}),
     };
     await convex.mutation(api.orders.placePerpsOrder, orderArgs);
     return { ok: true };
   } catch (error) {
     if (isMarkPricesValidationError(error)) {
+      markPricesSupported = false;
       try {
         await convex.mutation(api.orders.placePerpsOrder, baseArgs);
         return { ok: true };
