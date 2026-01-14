@@ -91,6 +91,11 @@ const TrendingDownIcon: Component<{ class?: string }> = (props) => (
   </svg>
 );
 
+const getDisplaySymbol = (symbol: string): string =>
+  symbol.toLowerCase().startsWith("xyz:")
+    ? symbol.slice(symbol.indexOf(":") + 1)
+    : symbol;
+
 const getIconGradient = (symbol: string): string => {
   switch (symbol) {
     case "BTC":
@@ -129,7 +134,6 @@ const getIconGradient = (symbol: string): string => {
 };
 
 const getIconLabel = (symbol: string): string => {
-  if (symbol === "XYZ100") return "100";
   if (symbol === "BTC") return "₿";
   if (symbol === "ETH") return "◆";
   if (symbol === "ZEC") return "Ⓩ";
@@ -421,6 +425,7 @@ const SymbolSearch: Component = () => {
             {(market, idx) => {
               const change = formatPriceChange(market);
               const isPositive = market.change24h >= 0;
+              const displaySymbol = getDisplaySymbol(market.symbol);
 
               return (
                 <button
@@ -431,21 +436,44 @@ const SymbolSearch: Component = () => {
                 >
                   <div class="market-info">
                     <Show
-                      when={["BTC", "ETH", "HYPE", "SOL", "ZEC"].includes(
-                        market.symbol,
-                      )}
+                      when={[
+                        "BTC",
+                        "ETH",
+                        "HYPE",
+                        "SOL",
+                        "ZEC",
+                        "XYZ100",
+                        "TSLA",
+                        "NVDA",
+                        "HOOD",
+                        "PLTR",
+                        "MSTR",
+                        "GOOGL",
+                        "AMZN",
+                        "INTC",
+                        "CRCL",
+                        "COIN",
+                        "AMD",
+                        "META",
+                        "MU",
+                        "NFLX",
+                        "MSFT",
+                        "AAPL",
+                        "SNDK",
+                        "ORCL",
+                      ].includes(displaySymbol)}
                       fallback={
                         <div
-                          class={`market-icon bg-gradient-to-br ${getIconGradient(market.symbol)}`}
+                          class={`market-icon bg-linear-to-br ${getIconGradient(displaySymbol)}`}
                         >
-                          <span>{getIconLabel(market.symbol)}</span>
+                          <span>{getIconLabel(displaySymbol)}</span>
                         </div>
                       }
                     >
                       <div class="market-icon">
                         <img
-                          src={`/${market.symbol.toLowerCase()}.svg`}
-                          alt={market.symbol}
+                          src={`/${displaySymbol.toLowerCase()}.svg`}
+                          alt={displaySymbol}
                           class="coin-logo"
                         />
                       </div>

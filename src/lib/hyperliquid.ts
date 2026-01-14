@@ -66,7 +66,7 @@ export interface HyperliquidCandle {
 export type { OrderBookLevel, L2Book };
 
 /**
- * Normalize a symbol to Hyperliquid format (uppercase, no suffix)
+ * Normalize a symbol to Hyperliquid format (uppercase, no suffix, xyz: prefix)
  */
 export const normalizeSymbol = sharedNormalizeSymbol;
 
@@ -91,12 +91,16 @@ export const toHyperliquidInterval = (resolution: string): string =>
  */
 export const fetchMetaAndAssetCtxs = async (
   signal?: AbortSignal,
+  options?: { dex?: string },
 ): Promise<MetaAndAssetCtxs | null> => {
   try {
+    const payload = options?.dex
+      ? { type: "metaAndAssetCtxs", dex: options.dex }
+      : { type: "metaAndAssetCtxs" };
     const response = await fetch(INFO_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "metaAndAssetCtxs" }),
+      body: JSON.stringify(payload),
       signal,
     });
 
@@ -163,7 +167,7 @@ export const getAssetContext = (
 ): { meta: AssetMeta; ctx: AssetCtx } | null => {
   const normalizedCoin = normalizeSymbol(coin);
   const index = metaAndCtxs.universe.findIndex(
-    (asset) => asset.name.toUpperCase() === normalizedCoin,
+    (asset) => normalizeSymbol(asset.name) === normalizedCoin,
   );
 
   if (index === -1) return null;

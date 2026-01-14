@@ -14,16 +14,29 @@ export interface L2Book {
 }
 
 /**
- * Normalize a symbol to standard format (uppercase, no suffix)
+ * Normalize a symbol to standard format (uppercase, no suffix).
+ * Preserves the lowercase xyz: prefix used by equity perps.
  */
-export const normalizeSymbol = (symbolName: string): string => {
-  if (!symbolName) return "BTC";
-  const upper = symbolName.toUpperCase();
+const normalizeCoreSymbol = (value: string): string => {
+  const upper = value.toUpperCase();
   const cleaned = upper.replace(/[^A-Z0-9]/g, "");
   if (cleaned.endsWith("USDT")) return cleaned.slice(0, -4);
   if (cleaned.endsWith("USD")) return cleaned.slice(0, -3);
   if (cleaned.endsWith("PERP")) return cleaned.slice(0, -4);
   return cleaned;
+};
+
+export const normalizeSymbol = (symbolName: string): string => {
+  if (!symbolName) return "BTC";
+  const raw = String(symbolName);
+  const trimmed = raw.trim();
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith("xyz:")) {
+    const suffix = trimmed.slice(trimmed.indexOf(":") + 1);
+    const normalized = normalizeCoreSymbol(suffix);
+    return normalized ? `xyz:${normalized}` : "";
+  }
+  return normalizeCoreSymbol(raw);
 };
 
 /**

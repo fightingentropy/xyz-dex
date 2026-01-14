@@ -617,7 +617,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
       />
       {contextMenu() && (
         <div
-          class="fixed z-50 bg-brand-surface border border-brand-border rounded shadow-lg py-1 min-w-[140px]"
+          class="fixed z-50 bg-brand-surface border border-brand-border rounded shadow-lg py-1 min-w-35"
           style={{
             left: `${contextMenu()!.x}px`,
             top: `${contextMenu()!.y}px`,

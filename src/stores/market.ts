@@ -211,6 +211,32 @@ const saveLastSymbol = (symbol: string) => {
   }
 };
 
+const DEFAULT_PERPS_LEVERAGE = "10x";
+const DEFAULT_SPOT_LEVERAGE = "1x";
+const BASELINE_PERPS = ["BTC", "ETH", "HYPE", "SOL", "ZEC"];
+const DISPLAY_MARKET_NAME_OVERRIDES: Record<string, string> = {
+  XYZ100: "NDX",
+};
+const getDisplaySymbol = (symbol: string): string => {
+  const trimmed = symbol.trim();
+  if (trimmed.toLowerCase().startsWith("xyz:")) {
+    return trimmed.slice(trimmed.indexOf(":") + 1);
+  }
+  return trimmed;
+};
+const isXyzEquitySymbol = (symbol: string): boolean =>
+  symbol.toLowerCase().startsWith("xyz:");
+export const formatMarketName = (
+  symbol: string,
+  type?: Market["type"],
+): string => {
+  const coreSymbol = getDisplaySymbol(symbol);
+  const override = DISPLAY_MARKET_NAME_OVERRIDES[coreSymbol.toUpperCase()];
+  if (override) return override;
+  if (type === "equities" || isXyzEquitySymbol(symbol)) return coreSymbol;
+  return `${symbol}-USDC`;
+};
+
 // Create reactive market store
 const initialSymbol = loadLastSymbol();
 const findMarket = (symbol: string, preferredType?: Market["type"]) => {
@@ -230,7 +256,7 @@ const findMarket = (symbol: string, preferredType?: Market["type"]) => {
 const initialMarket = findMarket(initialSymbol, "perps");
 const [currentSymbol, setCurrentSymbolInternal] = createSignal(initialSymbol);
 const [currentMarket, setCurrentMarket] = createSignal(
-  initialMarket?.name ?? `${initialSymbol}-USDC`,
+  initialMarket?.name ?? formatMarketName(initialSymbol),
 );
 const [currentMarketType, setCurrentMarketTypeInternal] = createSignal<
   Market["type"]
@@ -337,10 +363,6 @@ export const TICKER_DATA = () => {
   }));
 };
 
-const DEFAULT_PERPS_LEVERAGE = "10x";
-const DEFAULT_SPOT_LEVERAGE = "1x";
-const BASELINE_PERPS = ["BTC", "ETH", "HYPE", "SOL", "ZEC"];
-
 const formatPriceValue = (value: number): string => {
   if (!Number.isFinite(value) || value <= 0) return "--";
   return formatPriceStr(value);
@@ -409,7 +431,9 @@ const getTrackedAssets = (provider: DataProvider) => {
   BASELINE_PERPS.forEach((symbol) => perps.add(symbol));
   watchlistSet.forEach((symbol) => {
     perps.add(symbol);
-    spots.add(symbol);
+    if (!isXyzEquitySymbol(symbol)) {
+      spots.add(symbol);
+    }
   });
 
   if (perps.size === 0 && spots.size === 0) {
@@ -422,6 +446,12 @@ const getTrackedAssets = (provider: DataProvider) => {
   if (provider !== "hyperliquid") {
     spots.delete("HYPE");
     perps.delete("HYPE");
+    for (const symbol of perps) {
+      if (isXyzEquitySymbol(symbol)) perps.delete(symbol);
+    }
+    for (const symbol of spots) {
+      if (isXyzEquitySymbol(symbol)) spots.delete(symbol);
+    }
   }
 
   return {
@@ -601,15 +631,17 @@ const buildHyperliquidMarkets = async (
   markets: Market[];
   metaAndCtxs: MetaAndAssetCtxs | null;
   spotData: SpotMetaAndAssetCtxs | null;
+  equitiesMetaAndCtxs: MetaAndAssetCtxs | null;
 }> => {
   const perpsSet = new Set(tracked.perps);
   const spotsSet = new Set(tracked.spots);
 
-  const [metaAndCtxs, spotData] = await Promise.all([
+  const [metaAndCtxs, spotData, equitiesMetaAndCtxs] = await Promise.all([
     perpsSet.size > 0 ? fetchMetaAndAssetCtxs(signal) : Promise.resolve(null),
     spotsSet.size > 0
       ? fetchSpotMetaAndAssetCtxs(signal)
       : Promise.resolve(null),
+    fetchMetaAndAssetCtxs(signal, { dex: "xyz" }),
   ]);
 
   const newMarkets: Market[] = [];
@@ -621,7 +653,6 @@ const buildHyperliquidMarkets = async (
       if (!ctx) return;
 
       const markPriceVal = parseNumber(ctx.markPx ?? ctx.midPx);
-      const markPrice = Number.isFinite(markPriceVal) ? markPriceVal : 0;
       const prevDayPrice = parseNumber(ctx.prevDayPx);
       const change24hVal =
         Number.isFinite(prevDayPrice) &&
@@ -642,7 +673,7 @@ const buildHyperliquidMarkets = async (
 
       newMarkets.push({
         symbol: asset.name,
-        name: `${asset.name}-USDC`,
+        name: formatMarketName(asset.name, "perps"),
         price: formatPriceValue(markPriceVal),
         change24h: change24hVal,
         volume24h: volume24hVal,
@@ -684,7 +715,7 @@ const buildHyperliquidMarkets = async (
 
       newMarkets.push({
         symbol: baseToken,
-        name: `${baseToken}-USDC`,
+        name: formatMarketName(baseToken, "spot"),
         price: formatPriceValue(markPriceVal),
         change24h: change24hVal,
         volume24h: volume24hVal,
@@ -697,7 +728,47 @@ const buildHyperliquidMarkets = async (
     });
   }
 
-  return { markets: newMarkets, metaAndCtxs, spotData };
+  if (equitiesMetaAndCtxs) {
+    equitiesMetaAndCtxs.universe.forEach((asset, index) => {
+      const ctx = equitiesMetaAndCtxs.ctx[index];
+      if (!ctx) return;
+
+      const markPriceVal = parseNumber(ctx.markPx ?? ctx.midPx);
+      const markPrice = Number.isFinite(markPriceVal) ? markPriceVal : 0;
+      const prevDayPrice = parseNumber(ctx.prevDayPx);
+      const change24hVal =
+        Number.isFinite(prevDayPrice) &&
+        prevDayPrice > 0 &&
+        Number.isFinite(markPriceVal)
+          ? ((markPriceVal - prevDayPrice) / prevDayPrice) * 100
+          : 0;
+      const volumeRaw = parseNumber(ctx.dayNtlVlm);
+      const volume24hVal = Number.isFinite(volumeRaw) ? volumeRaw : 0;
+      const oiBase = parseNumber(ctx.openInterest);
+      const openInterestVal = Number.isFinite(oiBase)
+        ? Number.isFinite(markPriceVal)
+          ? oiBase * markPriceVal
+          : oiBase
+        : 0;
+      const fundingRaw = parseNumber(ctx.funding);
+      const fundingVal = Number.isFinite(fundingRaw) ? fundingRaw * 100 : 0;
+
+      newMarkets.push({
+        symbol: asset.name,
+        name: formatMarketName(asset.name, "equities"),
+        price: formatPriceValue(markPriceVal),
+        change24h: change24hVal,
+        volume24h: volume24hVal,
+        openInterest: openInterestVal,
+        funding: fundingVal,
+        type: "equities",
+        leverage: `${asset.maxLeverage}x`,
+        watchlist: watchlistSet.has(asset.name),
+      });
+    });
+  }
+
+  return { markets: newMarkets, metaAndCtxs, spotData, equitiesMetaAndCtxs };
 };
 
 const fetchBinancePerpMarket = async (
@@ -927,12 +998,14 @@ const fetchAndUpdateAll = async (
     let newMarkets: Market[] = [];
     let metaAndCtxs: MetaAndAssetCtxs | null = null;
     let spotData: SpotMetaAndAssetCtxs | null = null;
+    let equitiesMetaAndCtxs: MetaAndAssetCtxs | null = null;
 
     if (provider === "hyperliquid") {
       const result = await buildHyperliquidMarkets(trackedAssets, signal);
       newMarkets = result.markets;
       metaAndCtxs = result.metaAndCtxs;
       spotData = result.spotData;
+      equitiesMetaAndCtxs = result.equitiesMetaAndCtxs;
     } else if (provider === "binance") {
       newMarkets = await buildBinanceMarkets(trackedAssets, signal);
     } else {
@@ -956,6 +1029,12 @@ const fetchAndUpdateAll = async (
       if (marketType === "spot") {
         if (spotData) {
           updateCurrentSpotPrices(coin, spotData);
+        } else {
+          updateCurrentStatsFromMarket(selected);
+        }
+      } else if (marketType === "equities") {
+        if (equitiesMetaAndCtxs) {
+          updateCurrentSymbolPrices(coin, equitiesMetaAndCtxs);
         } else {
           updateCurrentStatsFromMarket(selected);
         }

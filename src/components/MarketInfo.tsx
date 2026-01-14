@@ -39,6 +39,12 @@ const ChevronDown = () => (
 const MarketInfo: Component = () => {
   const [fundingCountdown, setFundingCountdown] = createSignal("00:00:00");
 
+  const displaySymbol = () => {
+    const symbol = currentSymbol();
+    return symbol.toLowerCase().startsWith("xyz:")
+      ? symbol.slice(symbol.indexOf(":") + 1)
+      : symbol;
+  };
   const leverageLabel = () =>
     currentMarketType() === "spot" ? "Spot" : currentMarketLeverage();
   const changeColor = () => {
@@ -95,16 +101,41 @@ const MarketInfo: Component = () => {
         onClick={() => setSearchOpen(true)}
       >
         <Show
-          when={["BTC", "ETH", "HYPE", "SOL", "ZEC"].includes(currentSymbol())}
+          when={[
+            "BTC",
+            "ETH",
+            "HYPE",
+            "SOL",
+            "ZEC",
+            "XYZ100",
+            "TSLA",
+            "NVDA",
+            "HOOD",
+            "PLTR",
+            "MSTR",
+            "GOOGL",
+            "AMZN",
+            "INTC",
+            "CRCL",
+            "COIN",
+            "AMD",
+            "META",
+            "MU",
+            "NFLX",
+            "MSFT",
+            "AAPL",
+            "SNDK",
+            "ORCL",
+          ].includes(displaySymbol())}
           fallback={
             <div class="w-6 h-6 rounded-full bg-brand-screen flex items-center justify-center border border-brand-border text-[10px] font-semibold text-slate-200">
-              {currentSymbol().slice(0, 4)}
+              {displaySymbol().slice(0, 4)}
             </div>
           }
         >
           <img
-            src={`/${currentSymbol().toLowerCase()}.svg`}
-            alt={currentSymbol()}
+            src={`/${displaySymbol().toLowerCase()}.svg`}
+            alt={displaySymbol()}
             class="w-6 h-6"
           />
         </Show>
