@@ -1,5 +1,5 @@
 import { normalizeSymbol as sharedNormalizeSymbol } from "./format";
-import type { Candle } from "./binance";
+import type { Candle } from "./candles";
 
 const LIGHTER_API_BASE = "https://mainnet.zklighter.elliot.ai";
 const ORDERBOOKS_URL = `${LIGHTER_API_BASE}/api/v1/orderBooks`;

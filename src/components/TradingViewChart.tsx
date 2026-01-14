@@ -32,14 +32,7 @@ import {
   type DataProvider,
 } from "../stores/market";
 import { getPositionForSymbol } from "../stores/clob";
-import {
-  fetchCandles as fetchBinanceCandles,
-  fetchSpotCandles,
-  resolutionToMs,
-  Candle,
-  toInterval as toBinanceInterval,
-  toBinanceSymbol,
-} from "../lib/binance";
+import { resolutionToMs, type Candle } from "../lib/candles";
 import { fetchLighterCandles } from "../lib/lighter";
 import {
   fetchHyperliquidCandles,
@@ -356,22 +349,6 @@ const TradingViewChart: Component = () => {
     toMs: number,
     marketType: "perps" | "spot" | "equities",
   ) => {
-    if (provider === "binance") {
-      if (marketType === "spot") {
-        return fetchSpotCandles({
-          coin: symbol,
-          resolution: res,
-          fromMs,
-          toMs,
-        });
-      }
-      return fetchBinanceCandles({
-        coin: symbol,
-        resolution: res,
-        fromMs,
-        toMs,
-      });
-    }
     if (provider === "lighter") {
       return fetchLighterCandles({
         coin: symbol,
@@ -522,8 +499,13 @@ const TradingViewChart: Component = () => {
       streamTimer = undefined;
     }
     if (streamSocket) {
-      streamSocket.close();
+      const socket = streamSocket;
       streamSocket = undefined;
+      if (socket.readyState === WebSocket.CONNECTING) {
+        socket.addEventListener("open", () => socket.close(), { once: true });
+      } else {
+        socket.close();
+      }
     }
   };
 
@@ -542,10 +524,7 @@ const TradingViewChart: Component = () => {
 
     const marketType = currentMarketType();
     const generation = streamGeneration;
-    if (
-      provider === "lighter" ||
-      (provider === "binance" && marketType === "spot")
-    ) {
+    if (provider === "lighter") {
       const periodMs = resolutionToMs(res);
       const poll = async () => {
         if (generation !== streamGeneration) return;
@@ -557,21 +536,13 @@ const TradingViewChart: Component = () => {
         const fromMs = Math.max(0, lastTime - periodMs);
 
         try {
-          const candles =
-            provider === "lighter"
-              ? await fetchLighterCandles({
-                  coin: symbol,
-                  resolution: res,
-                  fromMs,
-                  toMs: now,
-                  marketType: marketType === "spot" ? "spot" : "perps",
-                })
-              : await fetchSpotCandles({
-                  coin: symbol,
-                  resolution: res,
-                  fromMs,
-                  toMs: now,
-                });
+          const candles = await fetchLighterCandles({
+            coin: symbol,
+            resolution: res,
+            fromMs,
+            toMs: now,
+            marketType: marketType === "spot" ? "spot" : "perps",
+          });
           if (generation !== streamGeneration) return;
           const latest = candles[candles.length - 1];
           if (!latest || !Number.isFinite(latest.time)) return;
@@ -609,18 +580,9 @@ const TradingViewChart: Component = () => {
       streamTimer = setInterval(poll, 5000) as unknown as number;
       return;
     }
-    const interval =
-      provider === "binance"
-        ? toBinanceInterval(res)
-        : toHyperliquidInterval(res);
-    const streamSymbol =
-      provider === "binance"
-        ? toBinanceSymbol(symbol).toLowerCase()
-        : normalizeSymbol(symbol);
-    const streamUrl =
-      provider === "binance"
-        ? `wss://fstream.binance.com/ws/${streamSymbol}@kline_${interval}`
-        : "wss://api.hyperliquid.xyz/ws";
+    const interval = toHyperliquidInterval(res);
+    const streamSymbol = normalizeSymbol(symbol);
+    const streamUrl = "wss://api.hyperliquid.xyz/ws";
 
     const connect = () => {
       if (generation !== streamGeneration) return;
@@ -629,6 +591,10 @@ const TradingViewChart: Component = () => {
       streamSocket = socket;
 
       socket.onopen = () => {
+        if (generation !== streamGeneration) {
+          socket.close();
+          return;
+        }
         if (provider === "hyperliquid") {
           socket.send(
             JSON.stringify({
@@ -649,34 +615,21 @@ const TradingViewChart: Component = () => {
         try {
           const payload = JSON.parse(event.data);
           let candle: Candle | null = null;
-          if (provider === "binance") {
-            const kline = payload?.k;
-            if (!kline) return;
-            candle = {
-              time: Number(kline.t),
-              open: Number(kline.o),
-              high: Number(kline.h),
-              low: Number(kline.l),
-              close: Number(kline.c),
-              volume: Number(kline.v),
-            };
-          } else {
-            if (payload?.channel === "error") {
-              socket.close();
-              return;
-            }
-            if (payload?.channel !== "candle") return;
-            const data = payload?.data;
-            if (!data) return;
-            candle = {
-              time: Number(data.t),
-              open: Number(data.o),
-              high: Number(data.h),
-              low: Number(data.l),
-              close: Number(data.c),
-              volume: Number(data.v),
-            };
+          if (payload?.channel === "error") {
+            socket.close();
+            return;
           }
+          if (payload?.channel !== "candle") return;
+          const data = payload?.data;
+          if (!data) return;
+          candle = {
+            time: Number(data.t),
+            open: Number(data.o),
+            high: Number(data.h),
+            low: Number(data.l),
+            close: Number(data.c),
+            volume: Number(data.v),
+          };
           if (!candle || !Number.isFinite(candle.time)) return;
 
           updateLastCandle(provider, `${symbol}-${marketType}`, res, candle);
@@ -710,6 +663,7 @@ const TradingViewChart: Component = () => {
 
       socket.onerror = () => {
         if (generation !== streamGeneration) return;
+        if (socket.readyState === WebSocket.CONNECTING) return;
         socket.close();
       };
 

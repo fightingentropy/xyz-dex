@@ -3,7 +3,7 @@
 Trade XYZ is a front-end trading UI built with SolidJS and Vite. It shows
 real-time market data, an interactive candlestick chart, an order book, and
 basic trade controls. The app is client-only and pulls data directly from
-Binance Futures APIs and websockets.
+Hyperliquid and Lighter APIs.
 
 ## Features
 - Trade view with market stats, chart, order book, and order form
@@ -23,10 +23,10 @@ between Classic and Portfolio. Full definitions and formulas live in
 
 ## Data sources and caching
 - REST data:
-  - Ticker, premium index, and open interest from Binance Futures
-  - Order book depth from Binance Futures
+  - Hyperliquid perps/spot/equity metadata and market stats
+  - Lighter perps/spot market stats and funding rates
 - Websocket data:
-  - Live kline updates from `wss://fstream.binance.com`
+  - Live kline updates from `wss://api.hyperliquid.xyz/ws`
 - Caching:
   - Candle data cached in `localStorage` per symbol and resolution
   - Last selected symbol saved so refreshes return to the same market
@@ -39,7 +39,8 @@ between Classic and Portfolio. Full definitions and formulas live in
 - `src/App.tsx`: top-level layout and page switching
 - `src/components`: UI components (chart, order book, forms)
 - `src/stores`: SolidJS signal stores for market data, routing, and cache
-- `src/lib/binance.ts`: Binance API helpers and formatting utilities
+- `src/lib/hyperliquid.ts`: Hyperliquid API helpers and formatting utilities
+- `src/lib/lighter.ts`: Lighter API helpers
 
 ## Development
 Install dependencies:
@@ -162,4 +163,4 @@ env files.
 - Routes are handled manually via `window.history`:
   - `/trade` or `/trade/SYMBOL`
   - `/portfolio`
-- The app expects network access to Binance endpoints for live data.
+- The app expects network access to Hyperliquid and Lighter endpoints for live data.

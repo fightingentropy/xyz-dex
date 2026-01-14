@@ -461,6 +461,8 @@ const SymbolSearch: Component = () => {
                         "AAPL",
                         "SNDK",
                         "ORCL",
+                        "SILVER",
+                        "GOLD",
                       ].includes(displaySymbol)}
                       fallback={
                         <div

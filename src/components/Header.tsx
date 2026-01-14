@@ -148,7 +148,6 @@ const Header: Component = () => {
                   >
                     <option value="hyperliquid">Hyperliquid</option>
                     <option value="lighter">Lighter</option>
-                    <option value="binance">Binance</option>
                   </select>
                 </label>
               </div>

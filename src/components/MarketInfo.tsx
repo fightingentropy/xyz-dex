@@ -126,6 +126,8 @@ const MarketInfo: Component = () => {
             "AAPL",
             "SNDK",
             "ORCL",
+            "SILVER",
+            "GOLD",
           ].includes(displaySymbol())}
           fallback={
             <div class="w-6 h-6 rounded-full bg-brand-screen flex items-center justify-center border border-brand-border text-[10px] font-semibold text-slate-200">

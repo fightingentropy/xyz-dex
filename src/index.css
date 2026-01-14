@@ -72,7 +72,11 @@ body {
   align-items: flex-start;
   justify-content: center;
   padding: 120px 24px 24px;
-  background: radial-gradient(ellipse at top, rgba(14, 16, 19, 0.92), rgba(14, 16, 19, 0.98));
+  background: radial-gradient(
+    ellipse at top,
+    rgba(14, 16, 19, 0.92),
+    rgba(14, 16, 19, 0.98)
+  );
   backdrop-filter: blur(12px);
   z-index: 60;
   opacity: 0;
@@ -87,11 +91,15 @@ body {
 
 .symbol-search-modal {
   width: min(960px, 95vw);
-  max-height: min(540px, calc(100vh - 96px));
-  background: linear-gradient(180deg, rgba(22, 26, 30, 0.98) 0%, rgba(14, 16, 19, 0.99) 100%);
+  max-height: min(620px, calc(100vh - 80px));
+  background: linear-gradient(
+    180deg,
+    rgba(22, 26, 30, 0.98) 0%,
+    rgba(14, 16, 19, 0.99) 100%
+  );
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 20px;
-  box-shadow: 
+  box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.03),
     0 24px 80px -12px rgba(0, 0, 0, 0.8),
     0 0 120px -20px rgba(80, 227, 171, 0.08);
@@ -116,7 +124,11 @@ body {
 .search-header {
   padding: 20px 24px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.02) 0%,
+    transparent 100%
+  );
 }
 
 .search-input-wrapper {
@@ -167,7 +179,11 @@ body {
 }
 
 .search-shortcut kbd {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 6px;
   padding: 4px 8px;
@@ -353,7 +369,9 @@ body {
 }
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Market Row */
@@ -442,7 +460,11 @@ body {
 }
 
 .xyz-badge {
-  background: linear-gradient(135deg, rgba(80, 227, 171, 0.2) 0%, rgba(80, 227, 171, 0.1) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(80, 227, 171, 0.2) 0%,
+    rgba(80, 227, 171, 0.1) 100%
+  );
   color: #50e3ab;
   font-size: 9px;
   font-weight: 700;
@@ -515,12 +537,14 @@ body {
 }
 
 /* Volume Cell */
-.volume-cell, .oi-cell {
+.volume-cell,
+.oi-cell {
   display: flex;
   align-items: center;
 }
 
-.volume-value, .oi-value {
+.volume-value,
+.oi-value {
   font-size: 13px;
   font-family: var(--font-mono);
   font-weight: 500;
@@ -585,7 +609,11 @@ body {
 }
 
 .shortcut-group kbd {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.04) 100%);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
   border: 1px solid rgba(255, 255, 255, 0.06);
   border-radius: 5px;
   padding: 3px 6px;

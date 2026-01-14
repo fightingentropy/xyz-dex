@@ -14,14 +14,7 @@ import {
   ColorType,
 } from "lightweight-charts";
 import type { IChartApi, ISeriesApi } from "lightweight-charts";
-import {
-  fetchCandles as fetchBinanceCandles,
-  fetchSpotCandles,
-  resolutionToMs,
-  Candle,
-  toInterval as toBinanceInterval,
-  toBinanceSymbol,
-} from "../lib/binance";
+import { resolutionToMs, type Candle } from "../lib/candles";
 import { fetchLighterCandles } from "../lib/lighter";
 import {
   fetchHyperliquidCandles,
@@ -139,22 +132,6 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     toMs: number,
     marketType: "perps" | "spot" | "equities",
   ) => {
-    if (provider === "binance") {
-      if (marketType === "spot") {
-        return fetchSpotCandles({
-          coin: symbol,
-          resolution,
-          fromMs,
-          toMs,
-        });
-      }
-      return fetchBinanceCandles({
-        coin: symbol,
-        resolution,
-        fromMs,
-        toMs,
-      });
-    }
     if (provider === "lighter") {
       return fetchLighterCandles({
         coin: symbol,
@@ -276,8 +253,13 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
       streamTimer = undefined;
     }
     if (streamSocket) {
-      streamSocket.close();
+      const socket = streamSocket;
       streamSocket = undefined;
+      if (socket.readyState === WebSocket.CONNECTING) {
+        socket.addEventListener("open", () => socket.close(), { once: true });
+      } else {
+        socket.close();
+      }
     }
   };
 
@@ -292,10 +274,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
 
     const marketType = currentMarketType();
     const generation = streamGeneration;
-    if (
-      provider === "lighter" ||
-      (provider === "binance" && marketType === "spot")
-    ) {
+    if (provider === "lighter") {
       const periodMs = resolutionToMs(resolution);
       const poll = async () => {
         if (generation !== streamGeneration) return;
@@ -307,21 +286,13 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
         const fromMs = Math.max(0, lastTime - periodMs);
 
         try {
-          const candles =
-            provider === "lighter"
-              ? await fetchLighterCandles({
-                  coin: symbol,
-                  resolution,
-                  fromMs,
-                  toMs: now,
-                  marketType: marketType === "spot" ? "spot" : "perps",
-                })
-              : await fetchSpotCandles({
-                  coin: symbol,
-                  resolution,
-                  fromMs,
-                  toMs: now,
-                });
+          const candles = await fetchLighterCandles({
+            coin: symbol,
+            resolution,
+            fromMs,
+            toMs: now,
+            marketType: marketType === "spot" ? "spot" : "perps",
+          });
           if (generation !== streamGeneration) return;
           const latest = candles[candles.length - 1];
           if (!latest || !Number.isFinite(latest.time)) return;
@@ -359,18 +330,9 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
       streamTimer = setInterval(poll, 5000) as unknown as number;
       return;
     }
-    const interval =
-      provider === "binance"
-        ? toBinanceInterval(resolution)
-        : toHyperliquidInterval(resolution);
-    const streamSymbol =
-      provider === "binance"
-        ? toBinanceSymbol(symbol).toLowerCase()
-        : normalizeSymbol(symbol);
-    const streamUrl =
-      provider === "binance"
-        ? `wss://fstream.binance.com/ws/${streamSymbol}@kline_${interval}`
-        : "wss://api.hyperliquid.xyz/ws";
+    const interval = toHyperliquidInterval(resolution);
+    const streamSymbol = normalizeSymbol(symbol);
+    const streamUrl = "wss://api.hyperliquid.xyz/ws";
 
     const connect = () => {
       if (generation !== streamGeneration) return;
@@ -379,6 +341,10 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
       streamSocket = socket;
 
       socket.onopen = () => {
+        if (generation !== streamGeneration) {
+          socket.close();
+          return;
+        }
         if (provider === "hyperliquid") {
           socket.send(
             JSON.stringify({
@@ -399,34 +365,21 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
         try {
           const payload = JSON.parse(event.data);
           let candle: Candle | null = null;
-          if (provider === "binance") {
-            const kline = payload?.k;
-            if (!kline) return;
-            candle = {
-              time: Number(kline.t),
-              open: Number(kline.o),
-              high: Number(kline.h),
-              low: Number(kline.l),
-              close: Number(kline.c),
-              volume: Number(kline.v),
-            };
-          } else {
-            if (payload?.channel === "error") {
-              socket.close();
-              return;
-            }
-            if (payload?.channel !== "candle") return;
-            const data = payload?.data;
-            if (!data) return;
-            candle = {
-              time: Number(data.t),
-              open: Number(data.o),
-              high: Number(data.h),
-              low: Number(data.l),
-              close: Number(data.c),
-              volume: Number(data.v),
-            };
+          if (payload?.channel === "error") {
+            socket.close();
+            return;
           }
+          if (payload?.channel !== "candle") return;
+          const data = payload?.data;
+          if (!data) return;
+          candle = {
+            time: Number(data.t),
+            open: Number(data.o),
+            high: Number(data.h),
+            low: Number(data.l),
+            close: Number(data.c),
+            volume: Number(data.v),
+          };
           if (!candle || !Number.isFinite(candle.time)) return;
 
           updateLastCandle(
@@ -460,6 +413,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
 
       socket.onerror = () => {
         if (generation !== streamGeneration) return;
+        if (socket.readyState === WebSocket.CONNECTING) return;
         socket.close();
       };
 
