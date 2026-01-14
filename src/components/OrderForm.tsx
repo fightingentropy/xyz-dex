@@ -423,9 +423,19 @@ const OrderForm: Component = () => {
     return nextUsed > collateralPool && nextUsed >= currentUsed;
   });
 
-  const canSubmitOrder = createMemo(
-    () => isOrderValid() && !insufficientMargin(),
-  );
+  const insufficientSpotBalance = createMemo(() => {
+    if (!isSpot() || !isOrderValid()) return false;
+    if (isLong()) {
+      return orderValue() > availableBalance();
+    }
+    return orderSize() > availableBalance();
+  });
+
+  const canSubmitOrder = createMemo(() => {
+    if (!isOrderValid()) return false;
+    if (isSpot()) return !insufficientSpotBalance();
+    return !insufficientMargin();
+  });
 
   const formatUsd = (value: number) => {
     if (!Number.isFinite(value)) return "--";
@@ -597,6 +607,22 @@ const OrderForm: Component = () => {
     if (isSpot()) {
       setOrderError("");
     }
+  });
+  createEffect(() => {
+    if (!isSpot()) return;
+    if (!isOrderValid()) {
+      setSpotError("");
+      return;
+    }
+    if (insufficientSpotBalance()) {
+      setSpotError(
+        isLong()
+          ? "Not enough spot USDC. Transfer from Perps to Spot."
+          : "Not enough spot balance to sell.",
+      );
+      return;
+    }
+    setSpotError("");
   });
 
   createEffect(() => {
@@ -1173,7 +1199,13 @@ const OrderForm: Component = () => {
           onClick={submitOrder}
           disabled={!canSubmitOrder()}
         >
-          {insufficientMargin() ? "Not enough margin" : "Place Order"}
+          {isSpot() && insufficientSpotBalance()
+            ? isLong()
+              ? "Not enough USDC"
+              : "Not enough balance"
+            : insufficientMargin()
+              ? "Not enough margin"
+              : "Place Order"}
         </button>
       </div>
 

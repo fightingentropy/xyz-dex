@@ -14,9 +14,24 @@ import {
 } from "../stores/market";
 import type { DataProvider } from "../stores/market";
 import { currentPage, setCurrentPage } from "../stores/page";
+import {
+  isPortfolioMarginEnabled,
+  togglePortfolioMargin,
+} from "../stores/clob";
 
 const Header: Component = () => {
   const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [isTogglingMargin, setIsTogglingMargin] = createSignal(false);
+
+  const handleTogglePortfolioMargin = async () => {
+    if (isTogglingMargin()) return;
+    setIsTogglingMargin(true);
+    try {
+      await togglePortfolioMargin(!isPortfolioMarginEnabled());
+    } finally {
+      setIsTogglingMargin(false);
+    }
+  };
 
   return (
     <header class="bg-brand-screen top-0 z-25 hidden items-center gap-2 px-3 py-2 sm:px-4 md:flex">
@@ -29,7 +44,7 @@ const Header: Component = () => {
             alt="XYZ"
             width="68"
             height="32"
-            class="object-contain flex-shrink-0 select-none"
+            class="object-contain shrink-0 select-none"
             src="/xyz.svg"
           />
         </button>
@@ -120,17 +135,61 @@ const Header: Component = () => {
                   </span>
                 </div>
 
-                <label class="flex items-center justify-between px-3 py-2.5 hover:bg-brand-border/30 cursor-pointer transition-colors">
+                <div
+                  class="flex items-center justify-between px-3 py-2.5 hover:bg-brand-border/30 cursor-pointer transition-colors"
+                  onClick={() => setShowOrderBook(!showOrderBook())}
+                >
                   <span class="text-sm text-slate-200">Show Order Book</span>
-                  <button
-                    class={`relative w-10 h-5 rounded-full transition-colors ${showOrderBook() ? "bg-brand-accent" : "bg-brand-border"}`}
-                    onClick={() => setShowOrderBook(!showOrderBook())}
+                  <div
+                    class={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${showOrderBook() ? "bg-brand-accent" : "bg-brand-border"}`}
                   >
                     <span
                       class={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${showOrderBook() ? "translate-x-5" : "translate-x-0.5"}`}
                     />
-                  </button>
-                </label>
+                  </div>
+                </div>
+
+                <div class="px-3 py-2 border-t border-brand-border">
+                  <span class="text-xs font-medium text-brand-slate-400 uppercase tracking-wider">
+                    Margin
+                  </span>
+                </div>
+                <div
+                  class={`flex items-center justify-between px-3 py-2.5 transition-colors ${
+                    isTogglingMargin()
+                      ? "opacity-60 cursor-not-allowed"
+                      : "hover:bg-brand-border/30 cursor-pointer"
+                  }`}
+                  onClick={() => {
+                    if (!isTogglingMargin()) {
+                      void handleTogglePortfolioMargin();
+                    }
+                  }}
+                >
+                  <div class="flex items-center gap-2">
+                    <span class="text-sm text-slate-200">Portfolio Margin</span>
+                    <Show when={isPortfolioMarginEnabled()}>
+                      <span class="text-[10px] uppercase tracking-wider text-emerald-400">
+                        Active
+                      </span>
+                    </Show>
+                  </div>
+                  <div
+                    class={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
+                      isPortfolioMarginEnabled()
+                        ? "bg-emerald-500"
+                        : "bg-brand-border"
+                    }`}
+                  >
+                    <span
+                      class={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                        isPortfolioMarginEnabled()
+                          ? "translate-x-5"
+                          : "translate-x-0.5"
+                      }`}
+                    />
+                  </div>
+                </div>
 
                 <div class="px-3 py-2 border-t border-brand-border">
                   <span class="text-xs font-medium text-brand-slate-400 uppercase tracking-wider">

@@ -4,12 +4,7 @@ import OpenOrdersTable from "./OpenOrdersTable";
 import PositionsTable from "./PositionsTable";
 import TradeHistoryTable from "./TradeHistoryTable";
 import { portfolioMetrics, tradeHistory } from "../stores/portfolio";
-import {
-  isPortfolioMarginEnabled,
-  openOrders,
-  positions,
-  togglePortfolioMargin,
-} from "../stores/clob";
+import { openOrders, positions } from "../stores/clob";
 
 type TabId =
   | "balances"
@@ -94,7 +89,6 @@ const Portfolio: Component = () => {
     createSignal<PeriodOption>(DEFAULT_PERIOD);
   const [periodMenuOpen, setPeriodMenuOpen] = createSignal(false);
   const [chartType] = createSignal("PnL");
-  const [isTogglingMargin, setIsTogglingMargin] = createSignal(false);
   const metrics = () => portfolioMetrics();
   const positionsCount = createMemo(() => positions().length);
   const openOrdersCount = createMemo(() => openOrders().length);
@@ -103,17 +97,6 @@ const Portfolio: Component = () => {
     if (tabId === "positions") return positionsCount();
     if (tabId === "openOrders") return openOrdersCount();
     return 0;
-  };
-
-  const handleTogglePortfolioMargin = async () => {
-    if (isTogglingMargin()) return;
-    setIsTogglingMargin(true);
-    try {
-      const newValue = !isPortfolioMarginEnabled();
-      await togglePortfolioMargin(newValue);
-    } finally {
-      setIsTogglingMargin(false);
-    }
   };
 
   const formatUsd = (value?: number) => {
@@ -128,17 +111,16 @@ const Portfolio: Component = () => {
 
   const pnlChart = createMemo(() => {
     const selected = periodFilter();
+    const rangeMs = "rangeMs" in selected ? selected.rangeMs : undefined;
     const rangeEnd = Date.now();
-    const rangeStart = selected.rangeMs
-      ? rangeEnd - selected.rangeMs
-      : undefined;
+    const rangeStart = rangeMs ? rangeEnd - rangeMs : undefined;
     const filtered = tradeHistory()
       .filter((trade) => !rangeStart || trade.createdAt >= rangeStart)
       .slice()
       .sort((a, b) => a.createdAt - b.createdAt);
 
     let running = 0;
-    const defaultSpan = selected.rangeMs ?? DEFAULT_RANGE_MS;
+    const defaultSpan = rangeMs ?? DEFAULT_RANGE_MS;
     const startTime =
       rangeStart ?? filtered[0]?.createdAt ?? rangeEnd - defaultSpan;
     const points = [{ time: startTime, value: 0 }];
@@ -215,56 +197,9 @@ const Portfolio: Component = () => {
 
   return (
     <div class="flex flex-col h-full bg-brand-screen text-slate-200 overflow-hidden">
-      {/* Page Title & Portfolio Margin Toggle */}
-      <div class="px-4 py-4 flex items-center justify-between">
+      {/* Page Title */}
+      <div class="px-4 py-4 flex items-center">
         <h1 class="text-xl font-semibold text-slate-100">Portfolio</h1>
-
-        {/* Portfolio Margin Toggle */}
-        <div class="flex items-center gap-3">
-          <div class="flex items-center gap-2">
-            <span class="text-sm text-brand-slate-400">Portfolio Margin</span>
-            <div class="relative group">
-              <svg
-                class="w-4 h-4 text-brand-slate-500 cursor-help"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <path d="M12 16v-4" />
-                <path d="M12 8h.01" />
-              </svg>
-              <div class="absolute bottom-full right-0 mb-2 w-64 p-3 bg-brand-surface border border-brand-border rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                <p class="text-xs text-brand-slate-300 leading-relaxed">
-                  Enable to add spot holdings (with haircuts) to the shared
-                  collateral pool for all perps. Equity is pooled across assets
-                  when portfolio margin is on.
-                </p>
-              </div>
-            </div>
-          </div>
-          <button
-            class={`relative w-11 h-6 rounded-full transition-colors ${
-              isPortfolioMarginEnabled()
-                ? "bg-emerald-500"
-                : "bg-brand-slate-600"
-            } ${isTogglingMargin() ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
-            onClick={handleTogglePortfolioMargin}
-            disabled={isTogglingMargin()}
-          >
-            <span
-              class={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${
-                isPortfolioMarginEnabled() ? "left-6" : "left-1"
-              }`}
-            />
-          </button>
-          <Show when={isPortfolioMarginEnabled()}>
-            <span class="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400 font-medium">
-              ACTIVE
-            </span>
-          </Show>
-        </div>
       </div>
 
       {/* Main Content */}

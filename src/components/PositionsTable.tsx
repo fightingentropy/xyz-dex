@@ -57,6 +57,14 @@ const formatSignedUsd = (value: number) => {
   return `${sign}${formatUsd(Math.abs(value))}`;
 };
 
+const formatPositionSymbol = (symbol: string) => {
+  if (!symbol) return "";
+  const trimmed = symbol.trim();
+  return trimmed.toLowerCase().startsWith("xyz:")
+    ? trimmed.slice(trimmed.indexOf(":") + 1)
+    : trimmed;
+};
+
 const PositionsTable: Component<{ compact?: boolean }> = (props) => {
   const cellPadding = props.compact ? "px-3 py-1.5" : "px-3 py-2";
   const headerPadding = props.compact ? "px-3 py-2" : "px-3 py-2.5";
@@ -297,7 +305,7 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                           class={`font-semibold hover:underline ${isLong ? "text-brand-green-400" : "text-brand-red-400"}`}
                           onClick={() => goToTrade(position.symbol)}
                         >
-                          {position.symbol}
+                          {formatPositionSymbol(position.symbol)}
                         </button>
                         <span class="text-xs text-brand-slate-400">
                           {position.leverage}x
@@ -308,7 +316,8 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                       <span
                         class={`font-mono ${isLong ? "text-brand-green-400" : "text-brand-red-400"}`}
                       >
-                        {formatSize(position.size)} {position.symbol}
+                        {formatSize(position.size)}{" "}
+                        {formatPositionSymbol(position.symbol)}
                       </span>
                     </td>
                     <td class={`${cellPadding} ${textSize}`}>

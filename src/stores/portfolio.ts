@@ -5,32 +5,22 @@ import { createConvexQuery } from "../lib/convex";
 import { isAuthenticated } from "./auth";
 
 export type Trade = Doc<"trades">;
-export type PortfolioMetrics =
-  | {
-      totalEquity: number;
-      perpsEquity: number;
-      spotEquity: number;
-      pnl: number;
-      volume: number;
-      updatedAt: number;
-    }
-  | null
-  | undefined;
+export type PortfolioMetrics = Doc<"portfolioMetrics"> | null | undefined;
 
 const TRADE_HISTORY_LIMIT = 500;
 
 const { tradeHistory, portfolioMetrics } = createRoot(() => {
   const tradesQuery = createConvexQuery(
     api.trades.listTrades,
-    () => {
-      return isAuthenticated() ? { limit: TRADE_HISTORY_LIMIT } : null;
-    },
+    () => (isAuthenticated() ? { limit: TRADE_HISTORY_LIMIT } : null),
     [],
   );
 
-  const metricsQuery = createConvexQuery(api.portfolio.getMetrics, () => {
-    return isAuthenticated() ? {} : null;
-  });
+  const metricsQuery = createConvexQuery(
+    api.portfolio.getMetrics,
+    () => (isAuthenticated() ? {} : null),
+    null,
+  );
 
   return {
     tradeHistory: () => tradesQuery() ?? [],

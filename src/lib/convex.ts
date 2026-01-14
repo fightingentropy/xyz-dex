@@ -10,34 +10,36 @@ if (!convexUrl) {
 export const convex = new ConvexClient(convexUrl);
 
 export const createConvexQuery = <TArgs extends Record<string, any>, TResult>(
-  query: FunctionReference<"query", TArgs, TResult>,
+  query: FunctionReference<"query", "public", TArgs, TResult>,
   args: () => TArgs | null,
   initial?: TResult,
 ) => {
-  const [data, setData] = createSignal<TResult | undefined>(initial);
+  const [data, setData] = createSignal<TResult | undefined>(
+    initial as TResult | undefined,
+  );
 
   createEffect(() => {
     const resolvedArgs = args();
     if (!resolvedArgs) {
-      setData(initial);
+      setData(() => initial as TResult | undefined);
       return;
     }
     const subscription = convex.onUpdate(
       query,
       resolvedArgs,
       (value: TResult) => {
-        setData(value);
+        setData(() => value);
       },
       (error) => {
         console.error("Convex query error:", error);
-        setData(initial);
+        setData(() => initial as TResult | undefined);
       },
     );
     const current = subscription.getCurrentValue();
     if (current !== undefined) {
-      setData(current);
+      setData(() => current);
     } else {
-      setData(initial);
+      setData(() => initial as TResult | undefined);
     }
     onCleanup(() => {
       subscription();
