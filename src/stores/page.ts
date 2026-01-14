@@ -7,10 +7,10 @@ import {
   setCurrentSymbol,
 } from "./market";
 
-export type Page = "trade" | "portfolio" | "charts" | "admin";
+export type Page = "trade" | "portfolio" | "charts" | "admin" | "vaults";
 
 // Parse URL to get initial state
-const parseUrl = (): { page: Page; symbol?: string } => {
+const parseUrl = (): { page: Page; symbol?: string; vaultId?: string } => {
   const path = window.location.pathname;
 
   // /trade or /trade/SYMBOL
@@ -23,6 +23,13 @@ const parseUrl = (): { page: Page; symbol?: string } => {
   // /portfolio
   if (path === "/portfolio") {
     return { page: "portfolio" };
+  }
+
+  // /vaults or /vaults/:id
+  if (path === "/vaults" || path.startsWith("/vaults/")) {
+    const parts = path.split("/").filter(Boolean);
+    const vaultId = parts[1];
+    return { page: "vaults", vaultId: vaultId || undefined };
   }
 
   // /charts
@@ -44,6 +51,9 @@ const initialState = parseUrl();
 const [currentPage, setCurrentPageInternal] = createSignal<Page>(
   initialState.page,
 );
+const [currentVaultId, setCurrentVaultIdInternal] = createSignal<
+  string | undefined
+>(initialState.vaultId);
 
 // Set initial symbol from URL if present
 if (initialState.symbol) {
@@ -52,11 +62,22 @@ if (initialState.symbol) {
 }
 
 // Update URL when page changes
-export const setCurrentPage = (page: Page) => {
+export const setCurrentPage = (
+  page: Page,
+  options: { vaultId?: string } = {},
+) => {
   setCurrentPageInternal(page);
+  if (page !== "vaults") {
+    setCurrentVaultIdInternal(undefined);
+  }
 
   if (page === "portfolio") {
     window.history.pushState({ page }, "", "/portfolio");
+  } else if (page === "vaults") {
+    const nextVaultId = options.vaultId;
+    setCurrentVaultIdInternal(nextVaultId);
+    const nextPath = nextVaultId ? `/vaults/${nextVaultId}` : "/vaults";
+    window.history.pushState({ page, vaultId: nextVaultId }, "", nextPath);
   } else if (page === "charts") {
     window.history.pushState({ page }, "", "/charts");
   } else if (page === "admin") {
@@ -73,6 +94,9 @@ window.addEventListener("popstate", (event) => {
 
   if (state?.page === "portfolio") {
     setCurrentPageInternal("portfolio");
+  } else if (state?.page === "vaults") {
+    setCurrentPageInternal("vaults");
+    setCurrentVaultIdInternal(state.vaultId);
   } else if (state?.page === "charts") {
     setCurrentPageInternal("charts");
   } else if (state?.page === "admin") {
@@ -88,6 +112,11 @@ window.addEventListener("popstate", (event) => {
     // Fallback: parse current URL
     const parsed = parseUrl();
     setCurrentPageInternal(parsed.page);
+    if (parsed.page === "vaults") {
+      setCurrentVaultIdInternal(parsed.vaultId);
+    } else {
+      setCurrentVaultIdInternal(undefined);
+    }
     if (parsed.symbol) {
       setCurrentSymbol(parsed.symbol);
       setCurrentMarket(formatMarketName(parsed.symbol));
@@ -98,6 +127,15 @@ window.addEventListener("popstate", (event) => {
 // Set initial URL state (replace, don't push)
 if (initialState.page === "portfolio") {
   window.history.replaceState({ page: "portfolio" }, "", "/portfolio");
+} else if (initialState.page === "vaults") {
+  const nextPath = initialState.vaultId
+    ? `/vaults/${initialState.vaultId}`
+    : "/vaults";
+  window.history.replaceState(
+    { page: "vaults", vaultId: initialState.vaultId },
+    "",
+    nextPath,
+  );
 } else if (initialState.page === "charts") {
   window.history.replaceState({ page: "charts" }, "", "/charts");
 } else if (initialState.page === "admin") {
@@ -111,4 +149,4 @@ if (initialState.page === "portfolio") {
   );
 }
 
-export { currentPage };
+export { currentPage, currentVaultId };

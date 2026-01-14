@@ -5,6 +5,7 @@ import PositionsTable from "./PositionsTable";
 import TradeHistoryTable from "./TradeHistoryTable";
 import { portfolioMetrics, tradeHistory } from "../stores/portfolio";
 import { openOrders, positions } from "../stores/clob";
+import { vaultsTotalEquity } from "../stores/vaults";
 
 type TabId =
   | "balances"
@@ -90,6 +91,7 @@ const Portfolio: Component = () => {
   const [periodMenuOpen, setPeriodMenuOpen] = createSignal(false);
   const [chartType] = createSignal("PnL");
   const metrics = () => portfolioMetrics();
+  const vaultEquity = () => vaultsTotalEquity();
   const positionsCount = createMemo(() => positions().length);
   const openOrdersCount = createMemo(() => openOrders().length);
 
@@ -362,7 +364,11 @@ const Portfolio: Component = () => {
                     value={formatUsd(metrics()?.spotEquity)}
                     subValue="--"
                   />
-                  <StatRow label="Vault Equity" value="--" subValue="--" />
+                  <StatRow
+                    label="Vault Equity"
+                    value={formatUsd(vaultEquity())}
+                    subValue="--"
+                  />
                   <StatRow label="Staking Account" value="--" subValue="--" />
                 </div>
 

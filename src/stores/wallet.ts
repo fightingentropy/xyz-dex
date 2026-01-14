@@ -2,6 +2,7 @@ import { createMemo, createRoot, createSignal } from "solid-js";
 import { api } from "../../convex/_generated/api";
 import { convex, createConvexQuery } from "../lib/convex";
 import { isAuthenticated } from "./auth";
+import { isVaultTradingAccount } from "./tradingAccount";
 
 export type SpotAsset =
   | "USDC"
@@ -48,7 +49,7 @@ const {
   const balancesQuery = createConvexQuery(
     api.spot.listSpotBalances,
     () => {
-      return isAuthenticated() ? {} : null;
+      return isAuthenticated() && !isVaultTradingAccount() ? {} : null;
     },
     [],
   );
@@ -76,6 +77,7 @@ const {
   const openTransferModal = (
     direction: "perpsToSpot" | "spotToPerps" = "perpsToSpot",
   ) => {
+    if (isVaultTradingAccount()) return;
     setTransferDirection(direction);
     setTransferModalOpen(true);
   };
@@ -117,6 +119,9 @@ export const placeSpotOrder = async ({
   if (!isAuthenticated()) {
     return { ok: false, error: "Sign in to place orders." };
   }
+  if (isVaultTradingAccount()) {
+    return { ok: false, error: "Vaults can only trade perps." };
+  }
   if (!Number.isFinite(size) || size <= 0) {
     return { ok: false, error: "Enter a valid size." };
   }
@@ -148,6 +153,12 @@ export const transferUSDC = async ({
 }): Promise<{ ok: boolean; error?: string }> => {
   if (!isAuthenticated()) {
     return { ok: false, error: "Sign in to transfer." };
+  }
+  if (isVaultTradingAccount()) {
+    return {
+      ok: false,
+      error: "Vaults cannot transfer between spot and perps.",
+    };
   }
   if (!Number.isFinite(amount) || amount <= 0) {
     return { ok: false, error: "Enter a valid amount." };

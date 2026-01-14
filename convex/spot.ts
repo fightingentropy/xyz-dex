@@ -28,12 +28,19 @@ const upsertSpotBalance = async (
   if (!existing) {
     await ctx.db.insert("spotBalances", {
       userId,
+      ownerType: "user",
+      ownerId: userId,
       asset,
       balance,
       updatedAt: now,
     });
   } else {
-    await ctx.db.patch(existing._id, { balance, updatedAt: now });
+    await ctx.db.patch(existing._id, {
+      ownerType: "user",
+      ownerId: userId,
+      balance,
+      updatedAt: now,
+    });
   }
 };
 
@@ -78,6 +85,8 @@ export const transferUSDC = mutation({
       // Deduct from perps
       if (perpsBalance) {
         await ctx.db.patch(perpsBalance._id, {
+          ownerType: "user",
+          ownerId: user._id,
           balance: perpsAmount - args.amount,
           updatedAt: Date.now(),
         });
@@ -95,12 +104,16 @@ export const transferUSDC = mutation({
       if (!perpsBalance) {
         await ctx.db.insert("perpsBalances", {
           userId: user._id,
+          ownerType: "user",
+          ownerId: user._id,
           asset: "USDC",
           balance: args.amount,
           updatedAt: now,
         });
       } else {
         await ctx.db.patch(perpsBalance._id, {
+          ownerType: "user",
+          ownerId: user._id,
           balance: perpsAmount + args.amount,
           updatedAt: now,
         });
@@ -164,6 +177,8 @@ export const placeSpotOrder = mutation({
 
     await ctx.db.insert("trades", {
       userId: user._id,
+      ownerType: "user",
+      ownerId: user._id,
       symbol: args.symbol,
       side: args.side,
       price: args.price,

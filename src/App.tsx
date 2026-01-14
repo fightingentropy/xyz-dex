@@ -11,8 +11,10 @@ import TradePanel from "./components/TradePanel";
 import AuthModal from "./components/AuthModal";
 import TransferModal from "./components/TransferModal";
 import AdminDashboard from "./components/AdminDashboard";
+import Vaults from "./components/Vaults";
 import { useLivePrices, showOrderBook } from "./stores/market";
 import { currentPage, setCurrentPage } from "./stores/page";
+import { vaultsList } from "./stores/vaults";
 import {
   authReady,
   isAdmin,
@@ -23,9 +25,20 @@ import {
 
 const App: Component = () => {
   const [isTabVisible, setIsTabVisible] = createSignal(!document.hidden);
+  const [mobileProfileOpen, setMobileProfileOpen] = createSignal(false);
 
   const handleVisibilityChange = () => {
     setIsTabVisible(!document.hidden);
+  };
+
+  const handleMyVaultClick = () => {
+    const operatorVault = vaultsList().find((vault) => vault.isOperator);
+    if (operatorVault) {
+      setCurrentPage("vaults", { vaultId: operatorVault._id });
+    } else {
+      setCurrentPage("vaults");
+    }
+    setMobileProfileOpen(false);
   };
 
   onMount(() => {
@@ -60,17 +73,110 @@ const App: Component = () => {
               class="object-contain"
             />
           </button>
-          <button
-            class="px-3 py-1.5 text-sm font-semibold text-brand-screen bg-brand-accent rounded-lg disabled:opacity-60 disabled:cursor-not-allowed"
-            disabled={!authReady()}
-            onClick={() => (isAuthenticated() ? logout() : login())}
+          <Show
+            when={authReady()}
+            fallback={
+              <button
+                class="px-3 py-1.5 text-sm font-semibold text-brand-screen bg-brand-accent rounded-lg opacity-60 cursor-not-allowed"
+                disabled
+              >
+                Checking
+              </button>
+            }
           >
-            {authReady()
-              ? isAuthenticated()
-                ? "Sign out"
-                : "Connect"
-              : "Checking"}
-          </button>
+            <Show
+              when={isAuthenticated()}
+              fallback={
+                <button
+                  class="px-3 py-1.5 text-sm font-semibold text-brand-screen bg-brand-accent rounded-lg hover:bg-brand-accent/80"
+                  onClick={() => login()}
+                >
+                  Connect
+                </button>
+              }
+            >
+              <div class="relative">
+                <button
+                  class="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-slate-100 border border-brand-border rounded-lg hover:border-brand-accent hover:text-brand-accent transition-colors"
+                  onClick={() => setMobileProfileOpen(!mobileProfileOpen())}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  <span>Profile</span>
+                </button>
+
+                {mobileProfileOpen() && (
+                  <>
+                    <div
+                      class="fixed inset-0 z-40"
+                      onClick={() => setMobileProfileOpen(false)}
+                    />
+                    <div class="absolute right-0 top-full mt-2 w-48 bg-brand-surface border border-brand-border rounded-lg shadow-xl z-50 py-2">
+                      <button
+                        class="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-slate-200 hover:bg-brand-border/30 transition-colors"
+                        onClick={handleMyVaultClick}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <rect x="3" y="4" width="18" height="16" rx="2" />
+                          <path d="M7 12h10" />
+                          <path d="M9 8h6" />
+                          <path d="M9 16h6" />
+                        </svg>
+                        <span>My Vault</span>
+                      </button>
+                      <div class="border-t border-brand-border my-1" />
+                      <button
+                        class="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-brand-red-400 hover:bg-brand-border/30 transition-colors"
+                        onClick={() => {
+                          setMobileProfileOpen(false);
+                          logout();
+                        }}
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        >
+                          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                          <polyline points="16 17 21 12 16 7" />
+                          <line x1="21" y1="12" x2="9" y2="12" />
+                        </svg>
+                        <span>Sign out</span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            </Show>
+          </Show>
         </header>
       </Show>
 
@@ -107,6 +213,13 @@ const App: Component = () => {
       <Show when={currentPage() === "portfolio"}>
         <div class="flex-1 overflow-hidden">
           <Portfolio />
+        </div>
+      </Show>
+
+      {/* Vaults View */}
+      <Show when={currentPage() === "vaults"}>
+        <div class="flex-1 overflow-hidden">
+          <Vaults />
         </div>
       </Show>
 
@@ -168,6 +281,28 @@ const App: Component = () => {
               <path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
             </svg>
             <span class="text-xs">Portfolio</span>
+          </button>
+          <button
+            class={`flex flex-col items-center gap-1 ${currentPage() === "vaults" ? "text-brand-accent" : "text-brand-slate-400"}`}
+            onClick={() => setCurrentPage("vaults")}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M7 12h10" />
+              <path d="M9 8h6" />
+              <path d="M9 16h6" />
+            </svg>
+            <span class="text-xs">Vaults</span>
           </button>
           <Show when={isAdmin()}>
             <button

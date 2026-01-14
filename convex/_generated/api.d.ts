@@ -23,6 +23,7 @@ import type * as portfolioMargin from "../portfolioMargin.js";
 import type * as spot from "../spot.js";
 import type * as trades from "../trades.js";
 import type * as users from "../users.js";
+import type * as vaults from "../vaults.js";
 
 import type {
   ApiFromModules,
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   spot: typeof spot;
   trades: typeof trades;
   users: typeof users;
+  vaults: typeof vaults;
 }>;
 
 /**

@@ -13,6 +13,7 @@ import { convex, createConvexQuery } from "../lib/convex";
 import { isAuthenticated } from "./auth";
 import { currentSymbol, markPrice, MARKETS } from "./market";
 import type { L2Book as OrderBook } from "../lib/format";
+import { isVaultTradingAccount, tradingVaultId } from "./tradingAccount";
 
 export type Collateral = "USDC" | "USDT";
 export type OrderSide = "buy" | "sell";
@@ -50,12 +51,17 @@ type PerpsBalance = {
 const isCollateral = (asset: string): asset is Collateral =>
   asset === "USDC" || asset === "USDT";
 
+const getOwnerArgs = () => {
+  const vaultId = tradingVaultId();
+  return isVaultTradingAccount() && vaultId ? { vaultId } : {};
+};
+
 const { openOrders, positions, perpsBalances, portfolioMarginStatus } =
   createRoot(() => {
     const openOrdersQuery = createConvexQuery(
       api.orders.listOpenOrders,
       () => {
-        return isAuthenticated() ? {} : null;
+        return isAuthenticated() ? getOwnerArgs() : null;
       },
       [],
     );
@@ -63,7 +69,7 @@ const { openOrders, positions, perpsBalances, portfolioMarginStatus } =
     const positionsQuery = createConvexQuery(
       api.orders.listPositions,
       () => {
-        return isAuthenticated() ? {} : null;
+        return isAuthenticated() ? getOwnerArgs() : null;
       },
       [],
     );
@@ -71,7 +77,7 @@ const { openOrders, positions, perpsBalances, portfolioMarginStatus } =
     const balancesQuery = createConvexQuery(
       api.orders.listPerpsBalances,
       () => {
-        return isAuthenticated() ? {} : null;
+        return isAuthenticated() ? getOwnerArgs() : null;
       },
       [],
     );
@@ -79,7 +85,7 @@ const { openOrders, positions, perpsBalances, portfolioMarginStatus } =
     const portfolioMarginQuery = createConvexQuery(
       api.portfolioMargin.getPortfolioMarginStatus,
       () => {
-        return isAuthenticated() ? {} : null;
+        return isAuthenticated() && !isVaultTradingAccount() ? {} : null;
       },
     );
 
@@ -275,6 +281,7 @@ const triggerAdlReduction = async (position: Position, mark: number) => {
       symbol,
       markPrice: mark,
       reduceSize,
+      ...getOwnerArgs(),
     });
   } catch (error) {
     console.error("ADL reduction failed:", error);
@@ -386,6 +393,7 @@ createRoot(() => {
         .mutation(api.orders.fillOpenOrder, {
           orderId: order._id,
           markPrice: mark,
+          ...getOwnerArgs(),
         })
         .catch((error) => {
           console.error("Failed to auto-fill limit order:", error);
@@ -426,6 +434,7 @@ createRoot(() => {
         .mutation(api.orders.closePosition, {
           symbol: position.symbol,
           markPrice: mark,
+          ...getOwnerArgs(),
         })
         .catch((error) => {
           console.error("Failed to auto-close position:", error);
@@ -500,6 +509,7 @@ createRoot(() => {
         await convex.mutation(api.orders.updateFundingForPositions, {
           fundingRates,
           ...(includeMarkPrices ? { markPrices } : {}),
+          ...getOwnerArgs(),
         });
       } catch (error) {
         if (isMarkPricesValidationError(error)) {
@@ -507,6 +517,7 @@ createRoot(() => {
           try {
             await convex.mutation(api.orders.updateFundingForPositions, {
               fundingRates,
+              ...getOwnerArgs(),
             });
             return;
           } catch (retryError) {
@@ -584,11 +595,13 @@ export const getAvailableBalance = (collateral: Collateral) => {
 
 // Portfolio Margin helpers
 export function isPortfolioMarginEnabled() {
+  if (isVaultTradingAccount()) return false;
   const status = portfolioMarginStatus();
   return status?.enabled ?? false;
 }
 
 export function getWeightedSpotEquity() {
+  if (isVaultTradingAccount()) return 0;
   if (!isPortfolioMarginEnabled()) return 0;
   const breakdown = portfolioMarginStatus()?.collateral?.spot ?? [];
   return breakdown.reduce((sum, item) => {
@@ -625,6 +638,9 @@ export const togglePortfolioMargin = async (
 ): Promise<{ ok: boolean; error?: string }> => {
   if (!isAuthenticated()) {
     return { ok: false, error: "Sign in to change settings." };
+  }
+  if (isVaultTradingAccount()) {
+    return { ok: false, error: "Vaults use classic margin." };
   }
   try {
     await convex.mutation(api.portfolioMargin.togglePortfolioMargin, {
@@ -695,6 +711,7 @@ export const placeOrder = async ({
     collateral,
     marginType,
     markPrice: mark,
+    ...getOwnerArgs(),
   };
 
   try {
@@ -752,6 +769,7 @@ export const updatePositionTpsl = async ({
       symbol,
       takeProfit: takeProfit ?? null,
       stopLoss: stopLoss ?? null,
+      ...getOwnerArgs(),
     });
     return { ok: true };
   } catch (error) {
@@ -765,7 +783,10 @@ export const updatePositionTpsl = async ({
 export const cancelOrder = async (orderId: Id<"orders">) => {
   if (!isAuthenticated()) return;
   try {
-    await convex.mutation(api.orders.cancelOrder, { orderId });
+    await convex.mutation(api.orders.cancelOrder, {
+      orderId,
+      ...getOwnerArgs(),
+    });
   } catch (error) {
     console.error("Failed to cancel order:", error);
   }
@@ -781,6 +802,7 @@ export const fillOpenOrder = async (orderId: Id<"orders">) => {
     await convex.mutation(api.orders.fillOpenOrder, {
       orderId,
       markPrice: fillMark,
+      ...getOwnerArgs(),
     });
   } catch (error) {
     console.error("Failed to fill order:", error);
@@ -797,6 +819,7 @@ export const closePosition = async (symbol: string) => {
     await convex.mutation(api.orders.closePosition, {
       symbol,
       markPrice: mark,
+      ...getOwnerArgs(),
     });
   } catch (error) {
     console.error("Failed to close position:", error);

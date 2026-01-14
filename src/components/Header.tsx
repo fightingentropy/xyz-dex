@@ -18,18 +18,48 @@ import {
   isPortfolioMarginEnabled,
   togglePortfolioMargin,
 } from "../stores/clob";
+import { vaultsList } from "../stores/vaults";
+import { isVaultTradingAccount } from "../stores/tradingAccount";
 
 const Header: Component = () => {
+  const [profileOpen, setProfileOpen] = createSignal(false);
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [isTogglingMargin, setIsTogglingMargin] = createSignal(false);
 
   const handleTogglePortfolioMargin = async () => {
+    if (isVaultTradingAccount()) return;
     if (isTogglingMargin()) return;
     setIsTogglingMargin(true);
     try {
       await togglePortfolioMargin(!isPortfolioMarginEnabled());
     } finally {
       setIsTogglingMargin(false);
+    }
+  };
+
+  const handleMyVaultClick = () => {
+    const operatorVault = vaultsList().find((vault) => vault.isOperator);
+    if (operatorVault) {
+      setCurrentPage("vaults", { vaultId: operatorVault._id });
+    } else {
+      setCurrentPage("vaults");
+    }
+    setProfileOpen(false);
+  };
+
+  const toggleProfileMenu = () => {
+    const next = !profileOpen();
+    setProfileOpen(next);
+    if (next) {
+      setSettingsOpen(false);
+    }
+  };
+
+  const toggleSettingsMenu = () => {
+    const next = !settingsOpen();
+    setSettingsOpen(next);
+    if (next) {
+      setProfileOpen(false);
     }
   };
 
@@ -69,6 +99,16 @@ const Header: Component = () => {
           >
             <p class="truncate">Portfolio</p>
           </button>
+          <button
+            class={
+              currentPage() === "vaults"
+                ? "text-brand-accent"
+                : "text-brand-slate-400 hover:text-brand-slate-100"
+            }
+            onClick={() => setCurrentPage("vaults")}
+          >
+            <p class="truncate">Vaults</p>
+          </button>
           <Show when={isAdmin()}>
             <button
               class={
@@ -87,23 +127,129 @@ const Header: Component = () => {
       <div class="flex-1" />
 
       <div class="flex items-center gap-2">
-        <button
-          class="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold text-brand-screen bg-brand-accent rounded-lg hover:bg-brand-accent/80 disabled:opacity-60 disabled:cursor-not-allowed"
-          disabled={!authReady()}
-          onClick={() => (isAuthenticated() ? logout() : login())}
+        <Show
+          when={authReady()}
+          fallback={
+            <button
+              class="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold text-brand-screen bg-brand-accent rounded-lg opacity-60 cursor-not-allowed"
+              disabled
+            >
+              Checking
+            </button>
+          }
         >
-          {authReady()
-            ? isAuthenticated()
-              ? "Sign out"
-              : "Connect"
-            : "Checking"}
-        </button>
+          <Show
+            when={isAuthenticated()}
+            fallback={
+              <button
+                class="flex items-center gap-2 px-4 py-1.5 text-sm font-semibold text-brand-screen bg-brand-accent rounded-lg hover:bg-brand-accent/80 disabled:opacity-60 disabled:cursor-not-allowed"
+                onClick={() => login()}
+              >
+                Connect
+              </button>
+            }
+          >
+            <div class="relative">
+              <button
+                class="flex items-center gap-2 px-3 py-1.5 text-sm font-semibold text-slate-100 border border-brand-border rounded-lg hover:border-brand-accent hover:text-brand-accent transition-colors"
+                onClick={toggleProfileMenu}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+                <span>Profile</span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+
+              {profileOpen() && (
+                <>
+                  <div
+                    class="fixed inset-0 z-40"
+                    onClick={() => setProfileOpen(false)}
+                  />
+                  <div class="absolute right-0 top-full mt-2 w-56 bg-brand-surface border border-brand-border rounded-lg shadow-xl z-50 py-2">
+                    <button
+                      class="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-slate-200 hover:bg-brand-border/30 transition-colors"
+                      onClick={handleMyVaultClick}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <rect x="3" y="4" width="18" height="16" rx="2" />
+                        <path d="M7 12h10" />
+                        <path d="M9 8h6" />
+                        <path d="M9 16h6" />
+                      </svg>
+                      <span>My Vault</span>
+                    </button>
+                    <div class="border-t border-brand-border my-1" />
+                    <button
+                      class="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-brand-red-400 hover:bg-brand-border/30 transition-colors"
+                      onClick={() => {
+                        setProfileOpen(false);
+                        logout();
+                      }}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                        <polyline points="16 17 21 12 16 7" />
+                        <line x1="21" y1="12" x2="9" y2="12" />
+                      </svg>
+                      <span>Sign out</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </Show>
+        </Show>
 
         {/* Settings Button */}
         <div class="relative">
           <button
             class="flex items-center justify-center w-9 h-9 text-brand-slate-400 hover:text-brand-slate-100 border border-brand-border rounded-lg bg-brand-surface transition-colors"
-            onClick={() => setSettingsOpen(!settingsOpen())}
+            onClick={toggleSettingsMenu}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -156,12 +302,12 @@ const Header: Component = () => {
                 </div>
                 <div
                   class={`flex items-center justify-between px-3 py-2.5 transition-colors ${
-                    isTogglingMargin()
+                    isTogglingMargin() || isVaultTradingAccount()
                       ? "opacity-60 cursor-not-allowed"
                       : "hover:bg-brand-border/30 cursor-pointer"
                   }`}
                   onClick={() => {
-                    if (!isTogglingMargin()) {
+                    if (!isTogglingMargin() && !isVaultTradingAccount()) {
                       void handleTogglePortfolioMargin();
                     }
                   }}

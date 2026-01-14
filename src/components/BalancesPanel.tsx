@@ -7,6 +7,7 @@ import {
 import { MARKETS, selectMarket, type Market } from "../stores/market";
 import { setCurrentPage } from "../stores/page";
 import { SpotAsset, getSpotBalance, openTransferModal } from "../stores/wallet";
+import { isVaultTradingAccount } from "../stores/tradingAccount";
 
 const columns = [
   "Coin",
@@ -69,7 +70,9 @@ const BalancesPanel: Component<{
   const cellPadding = () => (props.compact ? "px-3 py-1.5" : "px-3 py-2");
   const textSize = () => (props.compact ? "text-xs" : "text-sm");
   const visibleSpotAssets = createMemo(() =>
-    spotAssets.filter((asset) => getSpotBalance(asset.symbol) > 0),
+    isVaultTradingAccount()
+      ? []
+      : spotAssets.filter((asset) => getSpotBalance(asset.symbol) > 0),
   );
 
   const goToTrade = (symbol: string, type: Market["type"]) => {
@@ -128,12 +131,14 @@ const BalancesPanel: Component<{
                   <button class="text-brand-accent hover:underline">
                     Send
                   </button>
-                  <button
-                    class="text-brand-accent hover:underline"
-                    onClick={() => openTransferModal("perpsToSpot")}
-                  >
-                    Transfer to Spot
-                  </button>
+                  <Show when={!isVaultTradingAccount()}>
+                    <button
+                      class="text-brand-accent hover:underline"
+                      onClick={() => openTransferModal("perpsToSpot")}
+                    >
+                      Transfer to Spot
+                    </button>
+                  </Show>
                 </div>
               </td>
               <td class={`${cellPadding()} ${textSize()}`}>
@@ -141,7 +146,7 @@ const BalancesPanel: Component<{
               </td>
             </tr>
             {/* Spot USDC Row */}
-            <Show when={spotUsdcBalance() > 0}>
+            <Show when={!isVaultTradingAccount() && spotUsdcBalance() > 0}>
               <tr class="border-b border-brand-border/40">
                 <td class={`${cellPadding()} ${textSize()}`}>
                   <div class="flex items-center gap-2">
@@ -264,7 +269,6 @@ const BalancesPanel: Component<{
           </tbody>
         </table>
       </div>
-
     </div>
   );
 };

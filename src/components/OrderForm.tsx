@@ -29,6 +29,13 @@ import {
 } from "../stores/clob";
 import { isAuthenticated } from "../stores/auth";
 import { getSpotBalance, isSpotAsset, placeSpotOrder } from "../stores/wallet";
+import { vaultsList } from "../stores/vaults";
+import {
+  isVaultTradingAccount,
+  setTradingAccountToUser,
+  setTradingAccountToVault,
+  tradingVault,
+} from "../stores/tradingAccount";
 
 type OrderSide = "long" | "short";
 type OrderType = "market" | "limit";
@@ -56,6 +63,15 @@ const OrderForm: Component = () => {
   const [orderError, setOrderError] = createSignal("");
   const [marginModeOpen, setMarginModeOpen] = createSignal(false);
   const [marginModeLoading, setMarginModeLoading] = createSignal(false);
+  const operatorVault = createMemo(() =>
+    vaultsList().find((vault) => vault.isOperator && vault.status === "active"),
+  );
+  const canTradeAsVault = createMemo(
+    () => !!(operatorVault() ?? tradingVault()),
+  );
+  const vaultLabel = createMemo(
+    () => tradingVault()?.name ?? operatorVault()?.name ?? "My Vault",
+  );
 
   const isLong = () => side() === "long";
   const isSpot = createMemo(() => currentMarketType() === "spot");
@@ -424,7 +440,7 @@ const OrderForm: Component = () => {
   });
 
   const insufficientSpotBalance = createMemo(() => {
-    if (!isSpot() || !isOrderValid()) return false;
+    if (!isSpot() || !isOrderValid() || isVaultTradingAccount()) return false;
     if (isLong()) {
       return orderValue() > availableBalance();
     }
@@ -433,7 +449,7 @@ const OrderForm: Component = () => {
 
   const canSubmitOrder = createMemo(() => {
     if (!isOrderValid()) return false;
-    if (isSpot()) return !insufficientSpotBalance();
+    if (isSpot()) return !insufficientSpotBalance() && !isVaultTradingAccount();
     return !insufficientMargin();
   });
 
@@ -460,7 +476,11 @@ const OrderForm: Component = () => {
   const spotDecimals = (symbol: string | null) => (symbol === "BTC" ? 6 : 4);
 
   const marginModeLabel = createMemo(() =>
-    isPortfolioMarginEnabled() ? "Portfolio" : "Classic",
+    isVaultTradingAccount()
+      ? "Classic"
+      : isPortfolioMarginEnabled()
+        ? "Portfolio"
+        : "Classic",
   );
 
   const parsePriceInput = (value: string) => {
@@ -471,6 +491,7 @@ const OrderForm: Component = () => {
   };
 
   const handleToggleMarginMode = async () => {
+    if (isVaultTradingAccount()) return;
     if (!isAuthenticated()) return;
     setMarginModeLoading(true);
     const newEnabled = !isPortfolioMarginEnabled();
@@ -610,6 +631,10 @@ const OrderForm: Component = () => {
   });
   createEffect(() => {
     if (!isSpot()) return;
+    if (isVaultTradingAccount()) {
+      setSpotError("Vaults can only trade perps.");
+      return;
+    }
     if (!isOrderValid()) {
       setSpotError("");
       return;
@@ -647,6 +672,10 @@ const OrderForm: Component = () => {
       } else {
         setOrderError(message);
       }
+      return;
+    }
+    if (isSpot() && isVaultTradingAccount()) {
+      setSpotError("Vaults can only trade perps.");
       return;
     }
     if (isSpot()) {
@@ -721,6 +750,37 @@ const OrderForm: Component = () => {
   return (
     <div class="flex flex-col bg-brand-surface border-l border-brand-border h-full overflow-auto">
       <div class="bg-brand-screen/60 border-b border-brand-border p-3 space-y-3">
+        <div class="flex items-center justify-between text-xs">
+          <span class="text-brand-slate-400">Trading account</span>
+          <div class="flex items-center rounded-lg border border-brand-border p-0.5">
+            <button
+              type="button"
+              class={`px-2 py-1 rounded-md transition-colors ${
+                !isVaultTradingAccount()
+                  ? "bg-brand-accent text-brand-screen"
+                  : "text-brand-slate-400 hover:text-slate-200"
+              }`}
+              onClick={() => setTradingAccountToUser()}
+            >
+              Personal
+            </button>
+            <button
+              type="button"
+              disabled={!canTradeAsVault()}
+              class={`px-2 py-1 rounded-md transition-colors ${
+                isVaultTradingAccount()
+                  ? "bg-brand-accent text-brand-screen"
+                  : "text-brand-slate-400 hover:text-slate-200"
+              } ${!canTradeAsVault() ? "opacity-50 cursor-not-allowed" : ""}`}
+              onClick={() => {
+                const vault = operatorVault();
+                if (vault) setTradingAccountToVault(vault._id);
+              }}
+            >
+              {vaultLabel()}
+            </button>
+          </div>
+        </div>
         <Show when={!isSpot()}>
           <div class="space-y-2">
             <div class="grid grid-cols-3 gap-2">
@@ -741,7 +801,12 @@ const OrderForm: Component = () => {
                 {leverage()}x
               </button>
               <button
-                class="rounded-xl bg-brand-border/70 py-2 text-sm font-semibold text-slate-100"
+                class={`rounded-xl py-2 text-sm font-semibold ${
+                  isVaultTradingAccount()
+                    ? "bg-brand-border/50 text-brand-slate-500 cursor-not-allowed"
+                    : "bg-brand-border/70 text-slate-100"
+                }`}
+                disabled={isVaultTradingAccount()}
                 onClick={() => setMarginModeOpen(true)}
               >
                 {marginModeLabel()}
