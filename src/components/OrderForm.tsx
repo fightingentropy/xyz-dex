@@ -103,6 +103,16 @@ const OrderForm: Component = () => {
     getPositionForSymbol(currentSymbol()),
   );
   const mark = createMemo(() => getMarkPriceForSymbol(currentSymbol()));
+  const displaySymbol = createMemo(() => {
+    const symbol = currentSymbol().trim();
+    if (!symbol) return "";
+    const core = symbol.toLowerCase().startsWith("xyz:")
+      ? symbol.slice(symbol.indexOf(":") + 1)
+      : symbol;
+    const upper = core.toUpperCase();
+    if (upper === "100" || upper === "XYZ100") return "NDX";
+    return core;
+  });
   const parsedAmount = createMemo(() => parseFloat(amount()));
   const parsedLimitPrice = createMemo(() => parseFloat(limitPrice()));
   const availableBalance = createMemo(() => {
@@ -506,7 +516,7 @@ const OrderForm: Component = () => {
     if (!isSpot()) return "Available to Trade";
     if (isLong()) return "Available USDC";
     const asset = spotAsset();
-    return `Available ${asset ?? currentSymbol()}`;
+    return `Available ${asset ?? displaySymbol()}`;
   });
 
   const availableDisplay = createMemo(() => {
@@ -518,7 +528,7 @@ const OrderForm: Component = () => {
     return `${formatAmount(
       availableBalance(),
       spotDecimals(asset),
-    )} ${asset ?? currentSymbol()}`;
+    )} ${asset ?? displaySymbol()}`;
   });
 
   const positionLabel = createMemo(() =>
@@ -530,12 +540,12 @@ const OrderForm: Component = () => {
       const asset = spotAsset();
       const balance = asset ? getSpotBalance(asset) : 0;
       return `${formatAmount(balance, spotDecimals(asset))} ${
-        asset ?? currentSymbol()
+        asset ?? displaySymbol()
       }`;
     }
     return currentPosition()
-      ? `${currentPosition()!.size.toFixed(4)} ${currentSymbol()}`
-      : `0 ${currentSymbol()}`;
+      ? `${currentPosition()!.size.toFixed(4)} ${displaySymbol()}`
+      : `0 ${displaySymbol()}`;
   });
   const positionValueClass = createMemo(() => {
     if (isSpot()) {
@@ -1048,7 +1058,7 @@ const OrderForm: Component = () => {
               onInput={(e) => updateAmountInput(e.currentTarget.value)}
             />
             <button class="flex items-center gap-2 text-sm text-slate-100">
-              {currentSymbol()}
+              {displaySymbol()}
               <svg
                 class="w-4 h-4 text-brand-slate-400"
                 viewBox="0 0 24 24"

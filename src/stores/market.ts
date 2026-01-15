@@ -206,8 +206,15 @@ const saveLastSymbol = (symbol: string) => {
 const DEFAULT_PERPS_LEVERAGE = "10x";
 const DEFAULT_SPOT_LEVERAGE = "1x";
 const BASELINE_PERPS = ["BTC", "ETH", "HYPE", "SOL", "ZEC"];
+const shouldUpdateTitle = () => window.location.pathname.startsWith("/trade");
 const DISPLAY_MARKET_NAME_OVERRIDES: Record<string, string> = {
   XYZ100: "NDX",
+  100: "NDX",
+};
+const URL_SYMBOL_OVERRIDES: Record<string, string> = {
+  NDX: "xyz:XYZ100",
+  XYZ100: "xyz:XYZ100",
+  100: "xyz:XYZ100",
 };
 const getDisplaySymbol = (symbol: string): string => {
   const trimmed = symbol.trim();
@@ -218,6 +225,25 @@ const getDisplaySymbol = (symbol: string): string => {
 };
 const isXyzEquitySymbol = (symbol: string): boolean =>
   symbol.toLowerCase().startsWith("xyz:");
+const getUrlSymbol = (symbol: string): string => {
+  const coreSymbol = getDisplaySymbol(symbol);
+  const override = DISPLAY_MARKET_NAME_OVERRIDES[coreSymbol.toUpperCase()];
+  return override ?? coreSymbol;
+};
+const normalizeUrlSymbol = (symbol: string): string => {
+  if (!symbol) return DEFAULT_SYMBOL;
+  const normalized = normalizeSymbol(symbol);
+  if (normalized.toLowerCase().startsWith("xyz:")) return normalized;
+  const upper = normalized.toUpperCase();
+  const override = URL_SYMBOL_OVERRIDES[upper];
+  if (override) return override;
+  const xyzCandidate = `xyz:${upper}`;
+  const allMarkets = markets();
+  if (allMarkets.some((market) => market.symbol === xyzCandidate)) {
+    return xyzCandidate;
+  }
+  return normalized;
+};
 export const formatMarketName = (
   symbol: string,
   type?: Market["type"],
@@ -289,7 +315,7 @@ const setCurrentSymbol = (value: string | ((prev: string) => string)) => {
   const nextValue =
     typeof value === "function" ? value(currentSymbol()) : value;
   const normalized = nextValue.trim()
-    ? normalizeSymbol(nextValue)
+    ? normalizeUrlSymbol(nextValue)
     : DEFAULT_SYMBOL;
   setCurrentSymbolInternal(normalized);
   saveLastSymbol(normalized);
@@ -326,6 +352,8 @@ export {
   setShowOrderBook,
   dataProvider,
   setDataProvider,
+  getUrlSymbol,
+  normalizeUrlSymbol,
 };
 
 export const selectMarket = (market: Market) => {
@@ -339,11 +367,13 @@ export const selectMarket = (market: Market) => {
   window.history.pushState(
     { page: "trade", symbol: market.symbol },
     "",
-    `/trade/${market.symbol}`,
+    `/trade/${getUrlSymbol(market.symbol)}`,
   );
 
   // Update document title
-  document.title = `${markPrice()} | ${market.symbol} | Trade XYZ`;
+  if (shouldUpdateTitle()) {
+    document.title = `${markPrice()} | ${getUrlSymbol(market.symbol)} | Trade XYZ`;
+  }
 };
 
 // Ticker data derived from markets
@@ -381,6 +411,22 @@ const syncCurrentMarket = (nextMarkets: Market[]): Market | null => {
     ) ?? nextMarkets.find((market) => market.symbol === symbol);
 
   if (!match) {
+    if (!symbol.toLowerCase().startsWith("xyz:")) {
+      const upper = symbol.toUpperCase();
+      const override = URL_SYMBOL_OVERRIDES[upper];
+      const candidate = override ?? `xyz:${upper}`;
+      const aliasMatch = nextMarkets.find(
+        (market) => market.symbol === candidate,
+      );
+      if (aliasMatch) {
+        match = aliasMatch;
+        setCurrentSymbolInternal(aliasMatch.symbol);
+        saveLastSymbol(aliasMatch.symbol);
+      }
+    }
+  }
+
+  if (!match) {
     match = nextMarkets[0];
     if (!match) return null;
     setCurrentSymbolInternal(match.symbol);
@@ -413,7 +459,9 @@ const updateCurrentStatsFromMarket = (market: Market | null) => {
     }
   });
 
-  document.title = `${market.price || "--"} | ${market.symbol} | Trade XYZ`;
+  if (shouldUpdateTitle()) {
+    document.title = `${market.price || "--"} | ${getUrlSymbol(market.symbol)} | Trade XYZ`;
+  }
 };
 
 const getTrackedAssets = (provider: DataProvider) => {
@@ -470,7 +518,9 @@ const updateCurrentSymbolPrices = (
   if (markSource) {
     const formatted = formatPrice(markSource);
     setMarkPrice(formatted);
-    document.title = `${formatted} | ${currentSymbol()} | Trade XYZ`;
+    if (shouldUpdateTitle()) {
+      document.title = `${formatted} | ${getUrlSymbol(currentSymbol())} | Trade XYZ`;
+    }
   }
 
   // Oracle price
@@ -559,7 +609,9 @@ const updateCurrentSpotPrices = (
     const formatted = formatPrice(markSource);
     setMarkPrice(formatted);
     setOraclePrice(formatted);
-    document.title = `${formatted} | ${normalized} | Trade XYZ`;
+    if (shouldUpdateTitle()) {
+      document.title = `${formatted} | ${getUrlSymbol(normalized)} | Trade XYZ`;
+    }
   }
 
   if (ctx.prevDayPx && markNumber) {

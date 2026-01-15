@@ -17,6 +17,7 @@ import {
   openInterest,
   fundingRate,
   setSearchOpen,
+  getUrlSymbol,
 } from "../stores/market";
 
 const ChevronDown = () => (
@@ -45,6 +46,7 @@ const MarketInfo: Component = () => {
       ? symbol.slice(symbol.indexOf(":") + 1)
       : symbol;
   };
+  const displayMarketName = () => getUrlSymbol(currentMarket());
   const leverageLabel = () =>
     currentMarketType() === "spot" ? "Spot" : currentMarketLeverage();
   const changeColor = () => {
@@ -142,7 +144,7 @@ const MarketInfo: Component = () => {
             class="w-6 h-6"
           />
         </Show>
-        <span class="font-semibold text-slate-100">{currentMarket()}</span>
+        <span class="font-semibold text-slate-100">{displayMarketName()}</span>
         <span class="text-xs px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded">
           {leverageLabel()}
         </span>

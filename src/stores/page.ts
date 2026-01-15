@@ -1,8 +1,9 @@
 import { createSignal } from "solid-js";
-import { normalizeSymbol } from "../lib/hyperliquid";
 import {
   currentSymbol,
   formatMarketName,
+  getUrlSymbol,
+  normalizeUrlSymbol,
   setCurrentMarket,
   setCurrentSymbol,
 } from "./market";
@@ -16,7 +17,7 @@ const parseUrl = (): { page: Page; symbol?: string; vaultId?: string } => {
   // /trade or /trade/SYMBOL
   if (path === "/trade" || path.startsWith("/trade/")) {
     const parts = path.split("/").filter(Boolean);
-    const symbol = normalizeSymbol(parts[1] || "");
+    const symbol = normalizeUrlSymbol(parts[1] || "");
     return { page: "trade", symbol: symbol || undefined };
   }
 
@@ -55,6 +56,18 @@ const [currentVaultId, setCurrentVaultIdInternal] = createSignal<
   string | undefined
 >(initialState.vaultId);
 
+const setPageTitle = (page: Page) => {
+  if (page === "portfolio") {
+    document.title = "Portfolio | Trade XYZ";
+  } else if (page === "vaults") {
+    document.title = "Vaults | Trade XYZ";
+  } else if (page === "charts") {
+    document.title = "Charts | Trade XYZ";
+  } else if (page === "admin") {
+    document.title = "Admin | Trade XYZ";
+  }
+};
+
 // Set initial symbol from URL if present
 if (initialState.symbol) {
   setCurrentSymbol(initialState.symbol);
@@ -73,18 +86,26 @@ export const setCurrentPage = (
 
   if (page === "portfolio") {
     window.history.pushState({ page }, "", "/portfolio");
+    setPageTitle(page);
   } else if (page === "vaults") {
     const nextVaultId = options.vaultId;
     setCurrentVaultIdInternal(nextVaultId);
     const nextPath = nextVaultId ? `/vaults/${nextVaultId}` : "/vaults";
     window.history.pushState({ page, vaultId: nextVaultId }, "", nextPath);
+    setPageTitle(page);
   } else if (page === "charts") {
     window.history.pushState({ page }, "", "/charts");
+    setPageTitle(page);
   } else if (page === "admin") {
     window.history.pushState({ page }, "", "/admin");
+    setPageTitle(page);
   } else {
     const symbol = currentSymbol();
-    window.history.pushState({ page, symbol }, "", `/trade/${symbol}`);
+    window.history.pushState(
+      { page, symbol },
+      "",
+      `/trade/${getUrlSymbol(symbol)}`,
+    );
   }
 };
 
@@ -94,17 +115,21 @@ window.addEventListener("popstate", (event) => {
 
   if (state?.page === "portfolio") {
     setCurrentPageInternal("portfolio");
+    setPageTitle("portfolio");
   } else if (state?.page === "vaults") {
     setCurrentPageInternal("vaults");
     setCurrentVaultIdInternal(state.vaultId);
+    setPageTitle("vaults");
   } else if (state?.page === "charts") {
     setCurrentPageInternal("charts");
+    setPageTitle("charts");
   } else if (state?.page === "admin") {
     setCurrentPageInternal("admin");
+    setPageTitle("admin");
   } else if (state?.page === "trade") {
     setCurrentPageInternal("trade");
     if (state.symbol) {
-      const symbol = normalizeSymbol(state.symbol);
+      const symbol = normalizeUrlSymbol(state.symbol);
       setCurrentSymbol(symbol);
       setCurrentMarket(formatMarketName(symbol));
     }
@@ -117,6 +142,9 @@ window.addEventListener("popstate", (event) => {
     } else {
       setCurrentVaultIdInternal(undefined);
     }
+    if (parsed.page !== "trade") {
+      setPageTitle(parsed.page);
+    }
     if (parsed.symbol) {
       setCurrentSymbol(parsed.symbol);
       setCurrentMarket(formatMarketName(parsed.symbol));
@@ -127,6 +155,7 @@ window.addEventListener("popstate", (event) => {
 // Set initial URL state (replace, don't push)
 if (initialState.page === "portfolio") {
   window.history.replaceState({ page: "portfolio" }, "", "/portfolio");
+  setPageTitle("portfolio");
 } else if (initialState.page === "vaults") {
   const nextPath = initialState.vaultId
     ? `/vaults/${initialState.vaultId}`
@@ -136,16 +165,19 @@ if (initialState.page === "portfolio") {
     "",
     nextPath,
   );
+  setPageTitle("vaults");
 } else if (initialState.page === "charts") {
   window.history.replaceState({ page: "charts" }, "", "/charts");
+  setPageTitle("charts");
 } else if (initialState.page === "admin") {
   window.history.replaceState({ page: "admin" }, "", "/admin");
+  setPageTitle("admin");
 } else {
   const symbol = currentSymbol();
   window.history.replaceState(
     { page: "trade", symbol },
     "",
-    `/trade/${symbol}`,
+    `/trade/${getUrlSymbol(symbol)}`,
   );
 }
 
