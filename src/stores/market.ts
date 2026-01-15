@@ -376,15 +376,6 @@ export const selectMarket = (market: Market) => {
   }
 };
 
-// Ticker data derived from markets
-export const TICKER_DATA = () => {
-  const m = markets();
-  return m.slice(0, 10).map((market) => ({
-    symbol: market.symbol,
-    change: market.change24h,
-  }));
-};
-
 const formatPriceValue = (value: number): string => {
   if (!Number.isFinite(value) || value <= 0) return "--";
   return formatPriceStr(value);
@@ -543,42 +534,21 @@ const updateCurrentSymbolPrices = (
   // 24h volume (dayNtlVlm is notional volume in USD)
   if (ctx.dayNtlVlm != null) {
     const vol = Number(ctx.dayNtlVlm);
-    if (Number.isFinite(vol)) {
-      if (vol >= 1e9) {
-        setVolume24h(`$${(vol / 1e9).toFixed(2)}B`);
-      } else if (vol >= 1e6) {
-        setVolume24h(`$${(vol / 1e6).toFixed(2)}M`);
-      } else if (vol >= 1e3) {
-        setVolume24h(`$${(vol / 1e3).toFixed(2)}K`);
-      } else {
-        setVolume24h(`$${vol.toFixed(2)}`);
-      }
-    }
+    if (Number.isFinite(vol)) setVolume24h(formatUsdValue(vol));
   }
 
   // Open interest (in base currency, convert to USD using mark price)
   if (ctx.openInterest != null) {
     const oiBase = Number(ctx.openInterest);
     const oiVal = Number.isFinite(markNumber) ? oiBase * markNumber : oiBase;
-    if (Number.isFinite(oiVal)) {
-      if (oiVal >= 1e9) {
-        setOpenInterest(`$${(oiVal / 1e9).toFixed(2)}B`);
-      } else if (oiVal >= 1e6) {
-        setOpenInterest(`$${(oiVal / 1e6).toFixed(2)}M`);
-      } else if (oiVal >= 1e3) {
-        setOpenInterest(`$${(oiVal / 1e3).toFixed(2)}K`);
-      } else {
-        setOpenInterest(`$${oiVal.toFixed(2)}`);
-      }
-    }
+    if (Number.isFinite(oiVal)) setOpenInterest(formatUsdValue(oiVal));
   }
 
   // Funding rate (already in decimal form, multiply by 100 for percentage)
   if (ctx.funding != null) {
     const fundingVal = Number(ctx.funding) * 100;
     if (Number.isFinite(fundingVal)) {
-      const sign = fundingVal >= 0 ? "+" : "";
-      setFundingRate(`${sign}${fundingVal.toFixed(4)}%`);
+      setFundingRate(formatFundingRateValue(fundingVal));
     }
   }
 };
@@ -1000,9 +970,6 @@ const fetchAndUpdateAll = async (
     setMarketsLoading(false);
   }
 };
-
-// For backward compatibility - alias to the consolidated function
-export const fetchAllMarkets = fetchAndUpdateAll;
 
 /**
  * Unified live price polling hook.

@@ -152,6 +152,7 @@ const SymbolSearch: Component = () => {
   let listRef: HTMLDivElement | undefined;
 
   const filteredMarkets = createMemo(() => {
+    if (!searchOpen()) return [];
     const q = query().toLowerCase();
     const f = filter();
     const allMarkets = MARKETS();
@@ -448,6 +449,7 @@ const SymbolSearch: Component = () => {
                         "HOOD",
                         "PLTR",
                         "MSTR",
+                        "BABA",
                         "GOOGL",
                         "AMZN",
                         "INTC",

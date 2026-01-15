@@ -1,17 +1,21 @@
-import { Component, Show, createSignal, onCleanup, onMount } from "solid-js";
+import {
+  Component,
+  Show,
+  Suspense,
+  createSignal,
+  lazy,
+  onCleanup,
+  onMount,
+} from "solid-js";
 import Header from "./components/Header";
 import MarketInfo from "./components/MarketInfo";
 import TradingViewChart from "./components/TradingViewChart";
 import OrderBook from "./components/OrderBook";
 import OrderForm from "./components/OrderForm";
 import SymbolSearch from "./components/SymbolSearch";
-import Portfolio from "./components/Portfolio";
-import ChartsGrid from "./components/ChartsGrid";
 import TradePanel from "./components/TradePanel";
 import AuthModal from "./components/AuthModal";
 import TransferModal from "./components/TransferModal";
-import AdminDashboard from "./components/AdminDashboard";
-import Vaults from "./components/Vaults";
 import { useLivePrices, showOrderBook } from "./stores/market";
 import { currentPage, setCurrentPage } from "./stores/page";
 import { vaultsList } from "./stores/vaults";
@@ -22,6 +26,11 @@ import {
   login,
   logout,
 } from "./stores/auth";
+
+const Portfolio = lazy(() => import("./components/Portfolio"));
+const ChartsGrid = lazy(() => import("./components/ChartsGrid"));
+const AdminDashboard = lazy(() => import("./components/AdminDashboard"));
+const Vaults = lazy(() => import("./components/Vaults"));
 
 const App: Component = () => {
   const [isTabVisible, setIsTabVisible] = createSignal(!document.hidden);
@@ -43,10 +52,14 @@ const App: Component = () => {
 
   onMount(() => {
     document.addEventListener("visibilitychange", handleVisibilityChange);
-  });
-
-  onCleanup(() => {
-    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    const preloadTimeout = window.setTimeout(() => {
+      void Portfolio.preload();
+      void Vaults.preload();
+    }, 600);
+    onCleanup(() => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      clearTimeout(preloadTimeout);
+    });
   });
 
   // Start live price polling
@@ -212,28 +225,60 @@ const App: Component = () => {
       {/* Portfolio View */}
       <Show when={currentPage() === "portfolio"}>
         <div class="flex-1 overflow-hidden">
-          <Portfolio />
+          <Suspense
+            fallback={
+              <div class="h-full w-full flex items-center justify-center text-brand-slate-400">
+                Loading...
+              </div>
+            }
+          >
+            <Portfolio />
+          </Suspense>
         </div>
       </Show>
 
       {/* Vaults View */}
       <Show when={currentPage() === "vaults"}>
         <div class="flex-1 overflow-hidden">
-          <Vaults />
+          <Suspense
+            fallback={
+              <div class="h-full w-full flex items-center justify-center text-brand-slate-400">
+                Loading...
+              </div>
+            }
+          >
+            <Vaults />
+          </Suspense>
         </div>
       </Show>
 
       {/* Charts View */}
       <Show when={currentPage() === "charts"}>
         <div class="flex-1 overflow-hidden">
-          <ChartsGrid />
+          <Suspense
+            fallback={
+              <div class="h-full w-full flex items-center justify-center text-brand-slate-400">
+                Loading...
+              </div>
+            }
+          >
+            <ChartsGrid />
+          </Suspense>
         </div>
       </Show>
 
       {/* Admin View */}
       <Show when={currentPage() === "admin"}>
         <div class="flex-1 overflow-hidden">
-          <AdminDashboard />
+          <Suspense
+            fallback={
+              <div class="h-full w-full flex items-center justify-center text-brand-slate-400">
+                Loading...
+              </div>
+            }
+          >
+            <AdminDashboard />
+          </Suspense>
         </div>
       </Show>
 

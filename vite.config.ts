@@ -13,7 +13,6 @@ export default defineConfig({
       output: {
         manualChunks: {
           'lightweight-charts': ['lightweight-charts'],
-          'convex': ['convex'],
         },
       },
     },

@@ -21,7 +21,7 @@ export type SpotAsset =
   | "LTC"
   | "ATOM";
 
-export const SPOT_ASSETS: SpotAsset[] = [
+const SPOT_ASSETS: SpotAsset[] = [
   "USDC",
   "USDT",
   "BTC",

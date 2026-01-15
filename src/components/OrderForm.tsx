@@ -1300,7 +1300,7 @@ const OrderForm: Component = () => {
           <div class="flex justify-between text-sm">
             <span class="text-brand-slate-500">Balance</span>
             <span class="font-mono text-slate-100">
-              {formatUsd(perpsBalance() + spotCollateralValue())}
+              {formatUsd(collateralPool())}
             </span>
           </div>
           <div class="flex justify-between text-sm">

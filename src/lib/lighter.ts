@@ -74,7 +74,7 @@ const LIGHTER_INTERVAL_MAP: Record<string, string> = {
   "1W": "1w",
 };
 
-export const toLighterInterval = (resolution: string): string =>
+const toLighterInterval = (resolution: string): string =>
   LIGHTER_INTERVAL_MAP[resolution] ?? "5m";
 
 export const normalizeLighterSymbol = (symbol: string): string => {

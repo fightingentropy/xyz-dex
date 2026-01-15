@@ -10,6 +10,7 @@ import {
   CandlestickSeries,
   HistogramSeries,
   CandlestickData,
+  CrosshairMode,
   Time,
   ColorType,
 } from "lightweight-charts";
@@ -441,14 +442,16 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
         horzLines: { color: "rgba(38, 42, 47, 0.6)" },
       },
       crosshair: {
-        mode: 1,
+        mode: CrosshairMode.Normal,
         vertLine: {
+          visible: true,
           color: "#6b7280",
           width: 1,
           style: 2,
           labelBackgroundColor: "#262a2f",
         },
         horzLine: {
+          visible: true,
           color: "#6b7280",
           width: 1,
           style: 2,
