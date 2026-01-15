@@ -463,6 +463,7 @@ const SymbolSearch: Component = () => {
                         "ORCL",
                         "SILVER",
                         "GOLD",
+                        "COPPER",
                       ].includes(displaySymbol)}
                       fallback={
                         <div
