@@ -30,6 +30,7 @@ import {
 import { isAuthenticated } from "../stores/auth";
 import { getSpotBalance, isSpotAsset, placeSpotOrder } from "../stores/wallet";
 import { vaultsList } from "../stores/vaults";
+import type { VaultSummary } from "../stores/vaults";
 import {
   isVaultTradingAccount,
   setTradingAccountToUser,
@@ -64,7 +65,9 @@ const OrderForm: Component = () => {
   const [marginModeOpen, setMarginModeOpen] = createSignal(false);
   const [marginModeLoading, setMarginModeLoading] = createSignal(false);
   const operatorVault = createMemo(() =>
-    vaultsList().find((vault) => vault.isOperator && vault.status === "active"),
+    vaultsList().find(
+      (vault: VaultSummary) => vault.isOperator && vault.status === "active",
+    ),
   );
   const canTradeAsVault = createMemo(
     () => !!(operatorVault() ?? tradingVault()),
