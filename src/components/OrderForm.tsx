@@ -27,7 +27,7 @@ import {
   togglePortfolioMargin,
   updatePositionTpsl,
 } from "../stores/clob";
-import { isAuthenticated } from "../stores/auth";
+import { adminReady, isAdmin, isAuthenticated, login } from "../stores/auth";
 import { getSpotBalance, isSpotAsset, placeSpotOrder } from "../stores/wallet";
 import { vaultsList } from "../stores/vaults";
 import type { VaultSummary } from "../stores/vaults";
@@ -37,6 +37,7 @@ import {
   setTradingAccountToVault,
   tradingVault,
 } from "../stores/tradingAccount";
+import AdminDepositModal from "./AdminDepositModal";
 
 type OrderSide = "long" | "short";
 type OrderType = "market" | "limit";
@@ -64,6 +65,7 @@ const OrderForm: Component = () => {
   const [orderError, setOrderError] = createSignal("");
   const [marginModeOpen, setMarginModeOpen] = createSignal(false);
   const [marginModeLoading, setMarginModeLoading] = createSignal(false);
+  const [adminDepositOpen, setAdminDepositOpen] = createSignal(false);
   const operatorVault = createMemo(() =>
     vaultsList().find(
       (vault: VaultSummary) => vault.isOperator && vault.status === "active",
@@ -74,6 +76,22 @@ const OrderForm: Component = () => {
   );
   const vaultLabel = createMemo(
     () => tradingVault()?.name ?? operatorVault()?.name ?? "My Vault",
+  );
+  const canAdminDeposit = createMemo(
+    () =>
+      isAuthenticated() &&
+      adminReady() &&
+      isAdmin() &&
+      !isVaultTradingAccount(),
+  );
+  const depositButtonClass = createMemo(() => {
+    if (!isAuthenticated() || canAdminDeposit()) {
+      return "bg-brand-accent text-brand-screen hover:brightness-105";
+    }
+    return "bg-brand-border text-brand-slate-500 cursor-not-allowed";
+  });
+  const depositButtonDisabled = createMemo(
+    () => isAuthenticated() && !canAdminDeposit(),
   );
 
   const isLong = () => side() === "long";
@@ -760,6 +778,17 @@ const OrderForm: Component = () => {
     setSliderValue(0);
   };
 
+  const handleDepositClick = () => {
+    if (!isAuthenticated()) {
+      login();
+      return;
+    }
+    if (!adminReady() || !isAdmin() || isVaultTradingAccount()) {
+      return;
+    }
+    setAdminDepositOpen(true);
+  };
+
   return (
     <div class="flex flex-col bg-brand-surface border-l border-brand-border h-full overflow-auto">
       <div class="bg-brand-screen/60 border-b border-brand-border p-3 space-y-3">
@@ -1290,7 +1319,11 @@ const OrderForm: Component = () => {
       {/* Portfolio Section */}
       <div class="mt-auto border-t border-brand-border bg-brand-screen px-4 py-5 space-y-4">
         <div class="flex gap-3">
-          <button class="flex-1 rounded-xl bg-brand-accent py-2.5 text-sm font-semibold text-brand-screen">
+          <button
+            class={`flex-1 rounded-xl py-2.5 text-sm font-semibold transition-colors ${depositButtonClass()}`}
+            onClick={handleDepositClick}
+            disabled={depositButtonDisabled()}
+          >
             Deposit
           </button>
           <button class="flex-1 rounded-xl border border-brand-accent/60 py-2.5 text-sm font-semibold text-brand-accent hover:bg-brand-accent/10 transition-colors">
@@ -1326,6 +1359,11 @@ const OrderForm: Component = () => {
           </div>
         </div>
       </div>
+
+      <AdminDepositModal
+        open={adminDepositOpen()}
+        onClose={() => setAdminDepositOpen(false)}
+      />
     </div>
   );
 };

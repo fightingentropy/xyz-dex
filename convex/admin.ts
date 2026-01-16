@@ -1,5 +1,7 @@
-import { query } from "./_generated/server";
+import { ConvexError, v } from "convex/values";
+import { mutation, query } from "./_generated/server";
 import { requireAdmin } from "./lib/admin";
+import { updatePortfolioMetrics } from "./lib/portfolio";
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -51,5 +53,44 @@ export const getDashboardStats = query({
       openPositions: positions.length,
       updatedAt: now,
     };
+  },
+});
+
+export const mintPerpsUSDC = mutation({
+  args: { amount: v.number() },
+  handler: async (ctx, args) => {
+    const admin = await requireAdmin(ctx);
+    if (!Number.isFinite(args.amount) || args.amount <= 0) {
+      throw new ConvexError("Enter a valid USDC amount.");
+    }
+
+    const now = Date.now();
+    const existing = await ctx.db
+      .query("perpsBalances")
+      .withIndex("by_owner_asset", (q) =>
+        q.eq("ownerType", "user").eq("ownerId", admin._id).eq("asset", "USDC"),
+      )
+      .unique();
+
+    const nextBalance = (existing?.balance ?? 0) + args.amount;
+    if (!existing) {
+      await ctx.db.insert("perpsBalances", {
+        userId: admin._id,
+        ownerType: "user",
+        ownerId: admin._id,
+        asset: "USDC",
+        balance: nextBalance,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.patch(existing._id, {
+        balance: nextBalance,
+        updatedAt: now,
+      });
+    }
+
+    await updatePortfolioMetrics(ctx, admin._id);
+
+    return { balance: nextBalance };
   },
 });
