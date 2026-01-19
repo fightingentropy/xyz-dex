@@ -16,9 +16,11 @@ import SymbolSearch from "./components/SymbolSearch";
 import TradePanel from "./components/TradePanel";
 import AuthModal from "./components/AuthModal";
 import TransferModal from "./components/TransferModal";
+import OptionsTrade from "./components/OptionsTrade";
 import { useLivePrices, showOrderBook } from "./stores/market";
 import { currentPage, setCurrentPage } from "./stores/page";
 import { vaultsList } from "./stores/vaults";
+import type { VaultSummary } from "./stores/vaults";
 import {
   authReady,
   isAdmin,
@@ -41,7 +43,9 @@ const App: Component = () => {
   };
 
   const handleMyVaultClick = () => {
-    const operatorVault = vaultsList().find((vault) => vault.isOperator);
+    const operatorVault = vaultsList().find(
+      (vault: VaultSummary) => vault.isOperator,
+    );
     if (operatorVault) {
       setCurrentPage("vaults", { vaultId: operatorVault._id });
     } else {
@@ -64,7 +68,9 @@ const App: Component = () => {
 
   // Start live price polling
   useLivePrices({
-    enabled: () => currentPage() === "trade" && isTabVisible(),
+    enabled: () =>
+      (currentPage() === "trade" || currentPage() === "options") &&
+      isTabVisible(),
   });
 
   return (
@@ -222,6 +228,13 @@ const App: Component = () => {
         </div>
       </Show>
 
+      {/* Options View */}
+      <Show when={currentPage() === "options"}>
+        <div class="flex-1 overflow-hidden">
+          <OptionsTrade />
+        </div>
+      </Show>
+
       {/* Portfolio View */}
       <Show when={currentPage() === "portfolio"}>
         <div class="flex-1 overflow-hidden">
@@ -305,6 +318,28 @@ const App: Component = () => {
               <path d="M12 10v12" />
             </svg>
             <span class="text-xs">Trade</span>
+          </button>
+          <button
+            class={`flex flex-col items-center gap-1 ${currentPage() === "options" ? "text-brand-accent" : "text-brand-slate-400"}`}
+            onClick={() => setCurrentPage("options")}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M7 9h10" />
+              <path d="M7 13h5" />
+              <path d="M7 17h8" />
+            </svg>
+            <span class="text-xs">Options</span>
           </button>
           <button
             class={`flex flex-col items-center gap-1 ${currentPage() === "portfolio" ? "text-brand-accent" : "text-brand-slate-400"}`}

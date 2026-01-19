@@ -19,6 +19,7 @@ import {
   togglePortfolioMargin,
 } from "../stores/clob";
 import { vaultsList } from "../stores/vaults";
+import type { VaultSummary } from "../stores/vaults";
 import { isVaultTradingAccount } from "../stores/tradingAccount";
 
 const Header: Component = () => {
@@ -38,7 +39,9 @@ const Header: Component = () => {
   };
 
   const handleMyVaultClick = () => {
-    const operatorVault = vaultsList().find((vault) => vault.isOperator);
+    const operatorVault = vaultsList().find(
+      (vault: VaultSummary) => vault.isOperator,
+    );
     if (operatorVault) {
       setCurrentPage("vaults", { vaultId: operatorVault._id });
     } else {
@@ -88,6 +91,16 @@ const Header: Component = () => {
             onClick={() => setCurrentPage("trade")}
           >
             <p class="truncate">Trade</p>
+          </button>
+          <button
+            class={
+              currentPage() === "options"
+                ? "text-brand-accent"
+                : "text-brand-slate-400 hover:text-brand-slate-100"
+            }
+            onClick={() => setCurrentPage("options")}
+          >
+            <p class="truncate">Options</p>
           </button>
           <button
             class={

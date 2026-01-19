@@ -8,7 +8,13 @@ import {
   setCurrentSymbol,
 } from "./market";
 
-export type Page = "trade" | "portfolio" | "charts" | "admin" | "vaults";
+export type Page =
+  | "trade"
+  | "options"
+  | "portfolio"
+  | "charts"
+  | "admin"
+  | "vaults";
 
 // Parse URL to get initial state
 const parseUrl = (): { page: Page; symbol?: string; vaultId?: string } => {
@@ -24,6 +30,11 @@ const parseUrl = (): { page: Page; symbol?: string; vaultId?: string } => {
   // /portfolio
   if (path === "/portfolio") {
     return { page: "portfolio" };
+  }
+
+  // /options
+  if (path === "/options") {
+    return { page: "options" };
   }
 
   // /vaults or /vaults/:id
@@ -59,6 +70,8 @@ const [currentVaultId, setCurrentVaultIdInternal] = createSignal<
 const setPageTitle = (page: Page) => {
   if (page === "portfolio") {
     document.title = "Portfolio | Trade XYZ";
+  } else if (page === "options") {
+    document.title = "Options | Trade XYZ";
   } else if (page === "vaults") {
     document.title = "Vaults | Trade XYZ";
   } else if (page === "charts") {
@@ -86,6 +99,9 @@ export const setCurrentPage = (
 
   if (page === "portfolio") {
     window.history.pushState({ page }, "", "/portfolio");
+    setPageTitle(page);
+  } else if (page === "options") {
+    window.history.pushState({ page }, "", "/options");
     setPageTitle(page);
   } else if (page === "vaults") {
     const nextVaultId = options.vaultId;
@@ -116,6 +132,9 @@ window.addEventListener("popstate", (event) => {
   if (state?.page === "portfolio") {
     setCurrentPageInternal("portfolio");
     setPageTitle("portfolio");
+  } else if (state?.page === "options") {
+    setCurrentPageInternal("options");
+    setPageTitle("options");
   } else if (state?.page === "vaults") {
     setCurrentPageInternal("vaults");
     setCurrentVaultIdInternal(state.vaultId);
@@ -156,6 +175,9 @@ window.addEventListener("popstate", (event) => {
 if (initialState.page === "portfolio") {
   window.history.replaceState({ page: "portfolio" }, "", "/portfolio");
   setPageTitle("portfolio");
+} else if (initialState.page === "options") {
+  window.history.replaceState({ page: "options" }, "", "/options");
+  setPageTitle("options");
 } else if (initialState.page === "vaults") {
   const nextPath = initialState.vaultId
     ? `/vaults/${initialState.vaultId}`
