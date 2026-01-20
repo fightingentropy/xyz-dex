@@ -225,7 +225,7 @@ const formatSize = (value: number) => {
 };
 
 const OptionsOrderForm: Component<{
-  contract: () => SelectedContract;
+  contract: () => SelectedContract | null;
   quote: () => OptionQuote | undefined;
   underlyingPrice: () => number;
   prefill: () => Prefill;
@@ -241,12 +241,20 @@ const OptionsOrderForm: Component<{
 
   const contractKey = createMemo(() => {
     const contract = props.contract();
+    if (!contract) return "";
     return `${contract.expiry}-${contract.type}-${contract.strike}`;
   });
 
   createEffect(() => {
     const nextKey = contractKey();
     if (nextKey === lastContractKey()) return;
+    if (!nextKey) {
+      setLimitPrice("");
+      setLastContractKey("");
+      setError("");
+      setStatus("");
+      return;
+    }
     const quote = props.quote();
     if (quote) {
       setLimitPrice(quote.mark.toFixed(2));
@@ -279,20 +287,24 @@ const OptionsOrderForm: Component<{
   const underlying = createMemo(() => props.underlyingPrice());
 
   const collateralAsset = createMemo(() => {
+    const current = contract();
+    if (!current) return "USDC";
     if (side() === "buy") return "USDC";
-    return contract().type === "call" ? UNDERLYING_SYMBOL : "USDC";
+    return current.type === "call" ? UNDERLYING_SYMBOL : "USDC";
   });
 
   const collateralRequired = createMemo(() => {
+    const current = contract();
+    if (!current) return 0;
     const sizeValue = parsedSize();
     if (sizeValue <= 0) return 0;
     if (side() === "buy") {
       return sizeValue * priceValue();
     }
-    if (contract().type === "call") {
+    if (current.type === "call") {
       return sizeValue;
     }
-    return sizeValue * contract().strike;
+    return sizeValue * current.strike;
   });
 
   const availableCollateral = createMemo(() => {
@@ -302,11 +314,14 @@ const OptionsOrderForm: Component<{
   });
 
   const isCovered = createMemo(() => {
-    if (side() !== "sell" || contract().type !== "call") return false;
+    const current = contract();
+    if (!current) return false;
+    if (side() !== "sell" || current.type !== "call") return false;
     return availableCollateral() >= collateralRequired();
   });
 
   const canSubmit = createMemo(() => {
+    if (!contract()) return false;
     if (!Number.isFinite(parsedSize()) || parsedSize() <= 0) return false;
     if (orderType() === "limit" && priceValue() <= 0) return false;
     if (collateralRequired() > availableCollateral()) return false;
@@ -338,26 +353,29 @@ const OptionsOrderForm: Component<{
       setError("Check size, price, and collateral.");
       return;
     }
+    const current = contract();
+    if (!current) return;
     const actionLabel = `${side() === "buy" ? "Bought" : "Sold"} ${
-      contract().type === "call" ? "Call" : "Put"
+      current.type === "call" ? "Call" : "Put"
     }`;
     setStatus(`${actionLabel} ${parsedSize()} contracts (demo).`);
     setSize("");
   };
 
-  const actionLabel = createMemo(
-    () =>
-      `${side() === "buy" ? "Buy" : "Sell"} ${
-        contract().type === "call" ? "Call" : "Put"
-      }`,
-  );
+  const actionLabel = createMemo(() => {
+    const current = contract();
+    if (!current) return "Select Contract";
+    return `${side() === "buy" ? "Buy" : "Sell"} ${
+      current.type === "call" ? "Call" : "Put"
+    }`;
+  });
 
   const priceLabel = createMemo(() =>
     side() === "buy" ? "Premium" : "Credit",
   );
 
   const collateralLabel = createMemo(() =>
-    contract().type === "call" && side() === "sell"
+    contract() && contract()!.type === "call" && side() === "sell"
       ? "Covered Call Collateral"
       : "Collateral",
   );
@@ -369,12 +387,15 @@ const OptionsOrderForm: Component<{
           <div>
             <p class="text-sm font-semibold text-slate-100">Options Ticket</p>
             <p class="text-xs text-brand-slate-500">
-              {UNDERLYING_SYMBOL} {contract().strike.toFixed(2)}{" "}
-              {contract().type === "call" ? "Call" : "Put"}
+              {contract()
+                ? `${UNDERLYING_SYMBOL} ${contract()!.strike.toFixed(2)} ${
+                    contract()!.type === "call" ? "Call" : "Put"
+                  }`
+                : "Select a contract"}
             </p>
           </div>
           <div class="text-right text-xs text-brand-slate-500">
-            <p>{contract().expiry}</p>
+            <p>{contract()?.expiry ?? "--"}</p>
             <p class="font-mono text-slate-100">${underlying().toFixed(2)}</p>
           </div>
         </div>
@@ -407,25 +428,29 @@ const OptionsOrderForm: Component<{
         <div class="grid grid-cols-2 gap-2">
           <button
             class={`rounded-lg py-2 text-xs font-semibold tracking-wide transition-colors ${
-              contract().type === "call"
+              contract()?.type === "call"
                 ? "bg-brand-border text-slate-100"
                 : "text-brand-slate-400 hover:text-slate-200"
             }`}
             onClick={() =>
-              props.onUpdateContract({ ...contract(), type: "call" })
+              contract() &&
+              props.onUpdateContract({ ...contract()!, type: "call" })
             }
+            disabled={!contract()}
           >
             CALL
           </button>
           <button
             class={`rounded-lg py-2 text-xs font-semibold tracking-wide transition-colors ${
-              contract().type === "put"
+              contract()?.type === "put"
                 ? "bg-brand-border text-slate-100"
                 : "text-brand-slate-400 hover:text-slate-200"
             }`}
             onClick={() =>
-              props.onUpdateContract({ ...contract(), type: "put" })
+              contract() &&
+              props.onUpdateContract({ ...contract()!, type: "put" })
             }
+            disabled={!contract()}
           >
             PUT
           </button>
@@ -506,7 +531,11 @@ const OptionsOrderForm: Component<{
               {availableCollateral().toFixed(2)} {collateralAsset()}
             </span>
           </div>
-          <Show when={contract().type === "call" && side() === "sell"}>
+          <Show
+            when={
+              contract() && contract()!.type === "call" && side() === "sell"
+            }
+          >
             <div class="flex items-center justify-between">
               <span class="text-brand-slate-500">Coverage</span>
               <span
@@ -551,11 +580,7 @@ const OptionsTrade: Component = () => {
     expiries[2] ?? expiries[0],
   );
   const [selectedContract, setSelectedContract] =
-    createSignal<SelectedContract>({
-      expiry: selectedExpiry().id,
-      strike: PRICE_FALLBACK,
-      type: "call",
-    });
+    createSignal<SelectedContract | null>(null);
   const [prefill, setPrefill] = createSignal<Prefill>(null);
   const [nowMs, setNowMs] = createSignal(Date.now());
 
@@ -588,18 +613,18 @@ const OptionsTrade: Component = () => {
 
   const strikeDecimals = 2;
 
-  const atmStrike = createMemo(() => chain().center);
-
   const selectedQuote = createMemo(() => {
+    if (!selectedContract()) return undefined;
     const row = chain().rows.find(
-      (item) => item.strike === selectedContract().strike,
+      (item) => item.strike === selectedContract()!.strike,
     );
     if (!row) return undefined;
-    return selectedContract().type === "call" ? row.call : row.put;
+    return selectedContract()!.type === "call" ? row.call : row.put;
   });
 
   createEffect(() => {
     const current = selectedContract();
+    if (!current) return;
     const rows = chain().rows;
     if (rows.length === 0) return;
     const match = rows.find((row) => row.strike === current.strike);
@@ -612,20 +637,27 @@ const OptionsTrade: Component = () => {
 
   createEffect(() => {
     const expiry = selectedExpiry();
-    setSelectedContract((prev) => ({ ...prev, expiry: expiry.id }));
+    setSelectedContract((prev) =>
+      prev ? { ...prev, expiry: expiry.id } : prev,
+    );
   });
 
-  const handleSelect = (
-    row: ChainRow,
-    type: OptionType,
-    side?: OrderSide,
-    price?: number,
-  ) => {
+  const handleStrikeSelect = (row: ChainRow, type: OptionType) => {
+    const current = selectedContract();
+    if (current && current.strike === row.strike && current.type === type) {
+      setSelectedContract(null);
+      setPrefill(null);
+      return;
+    }
     setSelectedContract({
       expiry: selectedExpiry().id,
       strike: row.strike,
       type,
     });
+    setPrefill(null);
+  };
+
+  const handleQuotePrefill = (side?: OrderSide, price?: number) => {
     const hasPrice = Number.isFinite(price) && (price ?? 0) > 0;
     const nextPrefill =
       side || hasPrice ? { side, price: hasPrice ? price : undefined } : null;
@@ -638,9 +670,13 @@ const OptionsTrade: Component = () => {
 
   const expiryLabel = createMemo(() => formatExpiryLong(selectedExpiry().date));
 
-  const atmLabel = createMemo(
-    () => `${UNDERLYING_SYMBOL} $${underlyingPrice().toFixed(2)}`,
-  );
+  const priceRowIndex = createMemo(() => {
+    const rows = chain().rows;
+    if (rows.length === 0) return -1;
+    const price = underlyingPrice();
+    const firstHigher = rows.findIndex((row) => row.strike >= price);
+    return firstHigher === -1 ? rows.length : firstHigher;
+  });
 
   createEffect(() => {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
@@ -659,9 +695,6 @@ const OptionsTrade: Component = () => {
               <div>
                 <p class="text-sm font-semibold text-slate-100">
                   {UNDERLYING_SYMBOL} Options
-                </p>
-                <p class="text-xs text-brand-slate-500">
-                  ${underlyingPrice().toFixed(2)} - Mark
                 </p>
               </div>
             </div>
@@ -740,113 +773,138 @@ const OptionsTrade: Component = () => {
 
             <div class="flex-1 overflow-auto">
               <For each={chain().rows}>
-                {(row) => {
-                  const isAtm = () => row.strike === atmStrike();
+                {(row, index) => {
                   const selectedCall = () =>
-                    selectedContract().type === "call" &&
-                    selectedContract().strike === row.strike;
+                    !!selectedContract() &&
+                    selectedContract()!.type === "call" &&
+                    selectedContract()!.strike === row.strike;
                   const selectedPut = () =>
-                    selectedContract().type === "put" &&
-                    selectedContract().strike === row.strike;
+                    !!selectedContract() &&
+                    selectedContract()!.type === "put" &&
+                    selectedContract()!.strike === row.strike;
+                  const selectedRow = () => selectedCall() || selectedPut();
                   return (
-                    <div class="grid grid-cols-[minmax(0,1fr)_84px_minmax(0,1fr)] px-4 py-1 text-xs font-mono border-b border-brand-border/40 hover:bg-brand-border/20">
+                    <>
+                      <Show when={index() === priceRowIndex()}>
+                        <div class="relative px-4 py-1">
+                          <div class="absolute left-4 right-4 top-1/2 border-t border-dashed border-sky-400/70" />
+                          <div class="relative flex justify-center">
+                            <span class="rounded-full border border-sky-400/70 bg-brand-screen px-2 py-0.5 text-[10px] font-semibold text-sky-200">
+                              Current ${underlyingPrice().toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                      </Show>
                       <div
-                        class={`grid grid-cols-9 gap-2 text-right ${
-                          selectedCall() ? "bg-brand-border/40" : ""
+                        class={`grid grid-cols-[minmax(0,1fr)_84px_minmax(0,1fr)] px-4 py-1 text-xs font-mono border-b border-brand-border/40 hover:bg-brand-border/20 ${
+                          selectedRow() ? "bg-brand-border/30" : ""
                         }`}
                       >
-                        <div>{formatSize(row.call.bidSize)}</div>
-                        <div>{formatIv(row.call.bidIv)}</div>
-                        <button
-                          class="text-brand-green-400 hover:text-brand-accent"
-                          onClick={() =>
-                            handleSelect(row, "call", "sell", row.call.bid)
-                          }
+                        <div
+                          class={`grid grid-cols-9 gap-2 text-right ${
+                            selectedCall() ? "bg-brand-border/40" : ""
+                          }`}
+                          onClick={() => handleStrikeSelect(row, "call")}
                         >
-                          {formatPrice(row.call.bid)}
-                        </button>
-                        <button
-                          class="text-slate-200"
-                          onClick={() =>
-                            handleSelect(row, "call", undefined, row.call.mark)
-                          }
-                        >
-                          {formatPrice(row.call.mark)}
-                        </button>
-                        <button
-                          class="text-brand-red-400 hover:text-brand-red-300"
-                          onClick={() =>
-                            handleSelect(row, "call", "buy", row.call.ask)
-                          }
-                        >
-                          {formatPrice(row.call.ask)}
-                        </button>
-                        <div>{formatIv(row.call.askIv)}</div>
-                        <div>{formatSize(row.call.askSize)}</div>
-                        <div>{formatDelta(row.call.delta)}</div>
-                        <div>{formatIv(row.call.markIv)}</div>
-                      </div>
-
-                      <div class="flex items-center justify-center">
-                        <div class="flex flex-col items-center gap-1">
+                          <div>{formatSize(row.call.bidSize)}</div>
+                          <div>{formatIv(row.call.bidIv)}</div>
                           <button
-                            class={`px-2 py-1 rounded-lg text-xs font-semibold ${
-                              isAtm()
-                                ? "bg-sky-500 text-white"
-                                : "bg-brand-screen text-slate-200"
-                            }`}
-                            onClick={() => handleSelect(row, "call")}
+                            class="text-brand-green-400 hover:text-brand-accent"
+                            onClick={() =>
+                              handleQuotePrefill("sell", row.call.bid)
+                            }
                           >
-                            {row.strike.toFixed(strikeDecimals)}
+                            {formatPrice(row.call.bid)}
                           </button>
-                          <Show when={isAtm()}>
-                            <span class="text-[10px] text-sky-300">
-                              {atmLabel()}
-                            </span>
-                          </Show>
+                          <button
+                            class="text-slate-200"
+                            onClick={() =>
+                              handleQuotePrefill(undefined, row.call.mark)
+                            }
+                          >
+                            {formatPrice(row.call.mark)}
+                          </button>
+                          <button
+                            class="text-brand-red-400 hover:text-brand-red-300"
+                            onClick={() =>
+                              handleQuotePrefill("buy", row.call.ask)
+                            }
+                          >
+                            {formatPrice(row.call.ask)}
+                          </button>
+                          <div>{formatIv(row.call.askIv)}</div>
+                          <div>{formatSize(row.call.askSize)}</div>
+                          <div>{formatDelta(row.call.delta)}</div>
+                          <div>{formatIv(row.call.markIv)}</div>
+                        </div>
+
+                        <div class="flex items-center justify-center">
+                          <div class="flex flex-col items-center gap-1">
+                            <button
+                              class={`px-2 py-1 rounded-lg text-xs font-semibold ${
+                                selectedRow()
+                                  ? "bg-brand-accent text-brand-screen"
+                                  : "bg-brand-screen text-slate-200"
+                              }`}
+                              onClick={() => handleStrikeSelect(row, "call")}
+                            >
+                              {row.strike.toFixed(strikeDecimals)}
+                            </button>
+                          </div>
+                        </div>
+
+                        <div
+                          class={`grid grid-cols-9 gap-2 text-right ${
+                            selectedPut() ? "bg-brand-border/40" : ""
+                          }`}
+                          onClick={() => handleStrikeSelect(row, "put")}
+                        >
+                          <div>{formatSize(row.put.bidSize)}</div>
+                          <div>{formatIv(row.put.bidIv)}</div>
+                          <button
+                            class="text-brand-green-400 hover:text-brand-accent"
+                            onClick={() =>
+                              handleQuotePrefill("sell", row.put.bid)
+                            }
+                          >
+                            {formatPrice(row.put.bid)}
+                          </button>
+                          <button
+                            class="text-slate-200"
+                            onClick={() =>
+                              handleQuotePrefill(undefined, row.put.mark)
+                            }
+                          >
+                            {formatPrice(row.put.mark)}
+                          </button>
+                          <button
+                            class="text-brand-red-400 hover:text-brand-red-300"
+                            onClick={() =>
+                              handleQuotePrefill("buy", row.put.ask)
+                            }
+                          >
+                            {formatPrice(row.put.ask)}
+                          </button>
+                          <div>{formatIv(row.put.askIv)}</div>
+                          <div>{formatSize(row.put.askSize)}</div>
+                          <div>{formatDelta(row.put.delta)}</div>
+                          <div>{formatIv(row.put.markIv)}</div>
                         </div>
                       </div>
-
-                      <div
-                        class={`grid grid-cols-9 gap-2 text-right ${
-                          selectedPut() ? "bg-brand-border/40" : ""
-                        }`}
-                      >
-                        <div>{formatSize(row.put.bidSize)}</div>
-                        <div>{formatIv(row.put.bidIv)}</div>
-                        <button
-                          class="text-brand-green-400 hover:text-brand-accent"
-                          onClick={() =>
-                            handleSelect(row, "put", "sell", row.put.bid)
-                          }
-                        >
-                          {formatPrice(row.put.bid)}
-                        </button>
-                        <button
-                          class="text-slate-200"
-                          onClick={() =>
-                            handleSelect(row, "put", undefined, row.put.mark)
-                          }
-                        >
-                          {formatPrice(row.put.mark)}
-                        </button>
-                        <button
-                          class="text-brand-red-400 hover:text-brand-red-300"
-                          onClick={() =>
-                            handleSelect(row, "put", "buy", row.put.ask)
-                          }
-                        >
-                          {formatPrice(row.put.ask)}
-                        </button>
-                        <div>{formatIv(row.put.askIv)}</div>
-                        <div>{formatSize(row.put.askSize)}</div>
-                        <div>{formatDelta(row.put.delta)}</div>
-                        <div>{formatIv(row.put.markIv)}</div>
-                      </div>
-                    </div>
+                    </>
                   );
                 }}
               </For>
+              <Show when={priceRowIndex() === chain().rows.length}>
+                <div class="relative px-4 py-1">
+                  <div class="absolute left-4 right-4 top-1/2 border-t border-dashed border-sky-400/70" />
+                  <div class="relative flex justify-center">
+                    <span class="rounded-full border border-sky-400/70 bg-brand-screen px-2 py-0.5 text-[10px] font-semibold text-sky-200">
+                      Current ${underlyingPrice().toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+              </Show>
             </div>
           </div>
         </div>
