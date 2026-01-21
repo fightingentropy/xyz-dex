@@ -142,6 +142,42 @@ const getIconLabel = (symbol: string): string => {
   return symbol.slice(0, 3);
 };
 
+const ICON_SOURCES: Record<string, string> = {
+  NATGAS: "https://s3-symbol-logo.tradingview.com/natural-gas.svg",
+};
+
+const ICON_SYMBOLS = new Set([
+  "BTC",
+  "ETH",
+  "HYPE",
+  "SOL",
+  "ZEC",
+  "XYZ100",
+  "TSLA",
+  "NVDA",
+  "HOOD",
+  "PLTR",
+  "MSTR",
+  "BABA",
+  "GOOGL",
+  "AMZN",
+  "INTC",
+  "CRCL",
+  "COIN",
+  "AMD",
+  "META",
+  "MU",
+  "NFLX",
+  "MSFT",
+  "AAPL",
+  "SNDK",
+  "ORCL",
+  "SILVER",
+  "GOLD",
+  "COPPER",
+  "NATGAS",
+]);
+
 const SymbolSearch: Component = () => {
   const [query, setQuery] = createSignal("");
   const [filter, setFilter] = createSignal<FilterType>("all");
@@ -427,6 +463,9 @@ const SymbolSearch: Component = () => {
               const change = formatPriceChange(market);
               const isPositive = market.change24h >= 0;
               const displaySymbol = getDisplaySymbol(market.symbol);
+              const iconSrc =
+                ICON_SOURCES[displaySymbol] ??
+                `/${displaySymbol.toLowerCase()}.svg`;
 
               return (
                 <button
@@ -437,36 +476,7 @@ const SymbolSearch: Component = () => {
                 >
                   <div class="market-info">
                     <Show
-                      when={[
-                        "BTC",
-                        "ETH",
-                        "HYPE",
-                        "SOL",
-                        "ZEC",
-                        "XYZ100",
-                        "TSLA",
-                        "NVDA",
-                        "HOOD",
-                        "PLTR",
-                        "MSTR",
-                        "BABA",
-                        "GOOGL",
-                        "AMZN",
-                        "INTC",
-                        "CRCL",
-                        "COIN",
-                        "AMD",
-                        "META",
-                        "MU",
-                        "NFLX",
-                        "MSFT",
-                        "AAPL",
-                        "SNDK",
-                        "ORCL",
-                        "SILVER",
-                        "GOLD",
-                        "COPPER",
-                      ].includes(displaySymbol)}
+                      when={ICON_SYMBOLS.has(displaySymbol)}
                       fallback={
                         <div
                           class={`market-icon bg-linear-to-br ${getIconGradient(displaySymbol)}`}
@@ -477,7 +487,7 @@ const SymbolSearch: Component = () => {
                     >
                       <div class="market-icon">
                         <img
-                          src={`/${displaySymbol.toLowerCase()}.svg`}
+                          src={iconSrc}
                           alt={displaySymbol}
                           class="coin-logo"
                         />
