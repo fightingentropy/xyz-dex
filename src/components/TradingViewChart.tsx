@@ -705,6 +705,7 @@ const TradingViewChart: Component = () => {
         textColor: "#6b7280",
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: 11,
+        attributionLogo: false,
       },
       grid: {
         vertLines: { color: "rgba(38, 42, 47, 0.6)" },
