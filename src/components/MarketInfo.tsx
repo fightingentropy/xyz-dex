@@ -37,6 +37,41 @@ const ChevronDown = () => (
   </svg>
 );
 
+const ICON_SOURCES: Record<string, string> = {
+  NATGAS: "https://s3-symbol-logo.tradingview.com/natural-gas.svg",
+};
+
+const ICON_SYMBOLS = new Set([
+  "BTC",
+  "ETH",
+  "HYPE",
+  "SOL",
+  "ZEC",
+  "XYZ100",
+  "TSLA",
+  "NVDA",
+  "HOOD",
+  "PLTR",
+  "MSTR",
+  "GOOGL",
+  "AMZN",
+  "INTC",
+  "CRCL",
+  "COIN",
+  "AMD",
+  "META",
+  "MU",
+  "NFLX",
+  "MSFT",
+  "AAPL",
+  "SNDK",
+  "ORCL",
+  "SILVER",
+  "GOLD",
+  "COPPER",
+  "NATGAS",
+]);
+
 const MarketInfo: Component = () => {
   const [fundingCountdown, setFundingCountdown] = createSignal("00:00:00");
 
@@ -46,6 +81,9 @@ const MarketInfo: Component = () => {
       ? symbol.slice(symbol.indexOf(":") + 1)
       : symbol;
   };
+  const iconSrc = () =>
+    ICON_SOURCES[displaySymbol()] ??
+    `/${displaySymbol().toLowerCase()}.svg`;
   const displayMarketName = () => getUrlSymbol(currentMarket());
   const leverageLabel = () =>
     currentMarketType() === "spot" ? "Spot" : currentMarketLeverage();
@@ -103,35 +141,7 @@ const MarketInfo: Component = () => {
         onClick={() => setSearchOpen(true)}
       >
         <Show
-          when={[
-            "BTC",
-            "ETH",
-            "HYPE",
-            "SOL",
-            "ZEC",
-            "XYZ100",
-            "TSLA",
-            "NVDA",
-            "HOOD",
-            "PLTR",
-            "MSTR",
-            "GOOGL",
-            "AMZN",
-            "INTC",
-            "CRCL",
-            "COIN",
-            "AMD",
-            "META",
-            "MU",
-            "NFLX",
-            "MSFT",
-            "AAPL",
-            "SNDK",
-            "ORCL",
-            "SILVER",
-            "GOLD",
-            "COPPER",
-          ].includes(displaySymbol())}
+          when={ICON_SYMBOLS.has(displaySymbol())}
           fallback={
             <div class="w-6 h-6 rounded-full bg-brand-screen flex items-center justify-center border border-brand-border text-[10px] font-semibold text-slate-200">
               {displaySymbol().slice(0, 4)}
@@ -139,7 +149,7 @@ const MarketInfo: Component = () => {
           }
         >
           <img
-            src={`/${displaySymbol().toLowerCase()}.svg`}
+            src={iconSrc()}
             alt={displaySymbol()}
             class="w-6 h-6"
           />
