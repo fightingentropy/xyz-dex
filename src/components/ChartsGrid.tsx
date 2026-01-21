@@ -1,6 +1,6 @@
 import { Component, createEffect, createMemo, createSignal } from "solid-js";
 import SymbolChart from "./SymbolChart";
-import { MARKETS } from "../stores/market";
+import { MARKETS, currentMarketType, type Market } from "../stores/market";
 import { normalizeSymbol } from "../lib/hyperliquid";
 
 const STORAGE_KEY = "trade-xyz-charts-grid";
@@ -19,6 +19,14 @@ const RESOLUTION_LABELS: Record<Resolution, string> = {
   "1D": "1d",
   "1W": "1w",
 };
+const RAW_SYMBOLS = new Set([
+  "COPPER",
+  "NATGAS",
+  "SILVER",
+  "GOLD",
+  "ALUMINIUM",
+  "URANIUM",
+]);
 
 const loadResolution = (): Resolution => {
   try {
@@ -99,6 +107,22 @@ const ChartsGrid: Component = () => {
     symbols().forEach((symbol) => merged.add(symbol));
     return Array.from(merged).sort();
   });
+  const marketBySymbol = createMemo(() => {
+    const preferredType = currentMarketType();
+    const list = MARKETS();
+    const map = new Map<string, Market>();
+    list.forEach((market) => {
+      if (market.type === preferredType) {
+        map.set(market.symbol, market);
+      }
+    });
+    list.forEach((market) => {
+      if (!map.has(market.symbol)) {
+        map.set(market.symbol, market);
+      }
+    });
+    return map;
+  });
 
   const updateSymbol = (index: number, value: string) => {
     const normalized = normalizeSymbol(value);
@@ -154,6 +178,34 @@ const ChartsGrid: Component = () => {
     }
     return "grid-cols-1 grid-rows-4 md:grid-cols-2 md:grid-rows-2";
   });
+  const changeForSymbol = (symbol: string) => {
+    const market = marketBySymbol().get(symbol);
+    if (!market || !Number.isFinite(market.change24h)) {
+      return { text: "--", className: "text-brand-slate-500" };
+    }
+    const sign = market.change24h >= 0 ? "+" : "";
+    return {
+      text: `${sign}${market.change24h.toFixed(2)}%`,
+      className:
+        market.change24h >= 0 ? "text-brand-green-400" : "text-brand-red-400",
+    };
+  };
+  const labelForSymbol = (symbol: string) => {
+    const trimmed = symbol.trim();
+    const withoutPrefix = trimmed.toLowerCase().startsWith("xyz:")
+      ? trimmed.slice(trimmed.indexOf(":") + 1)
+      : trimmed;
+    const withoutSuffix = withoutPrefix.toUpperCase().endsWith("-USDC")
+      ? withoutPrefix.slice(0, -5)
+      : withoutPrefix;
+    const base = withoutSuffix.toUpperCase();
+    for (const raw of RAW_SYMBOLS) {
+      if (base === raw || base.startsWith(`${raw}-`)) {
+        return raw;
+      }
+    }
+    return `${base}-USDC`;
+  };
 
   return (
     <div class="relative h-full w-full bg-brand-screen">
@@ -251,8 +303,16 @@ const ChartsGrid: Component = () => {
       >
         {symbols().map((symbol) => (
           <div class="relative flex min-h-0 flex-col bg-brand-screen">
-            <div class="absolute left-3 top-3 z-10 rounded-md border border-brand-border bg-brand-surface/80 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-slate-200">
-              {symbol}-USDC
+            <div class="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-md border border-brand-border bg-brand-surface/80 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-slate-200">
+              {(() => {
+                const change = changeForSymbol(symbol);
+                return (
+                  <>
+                    <span>{labelForSymbol(symbol)}</span>
+                    <span class={change.className}>{change.text}</span>
+                  </>
+                );
+              })()}
             </div>
             <SymbolChart symbol={symbol} resolution={resolution()} />
           </div>
