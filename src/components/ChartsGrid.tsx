@@ -5,7 +5,10 @@ import { normalizeSymbol } from "../lib/hyperliquid";
 
 const STORAGE_KEY = "trade-xyz-charts-grid";
 const RESOLUTION_KEY = "trade-xyz-charts-resolution";
-const DEFAULT_SYMBOLS = ["BTC", "HYPE", "BTC", "HYPE"];
+const CHART_COUNT_KEY = "trade-xyz-charts-count";
+const DEFAULT_SYMBOLS = ["BTC", "HYPE", "BTC", "HYPE", "BTC", "HYPE"];
+const CHART_COUNTS = [2, 4, 6] as const;
+type ChartCount = (typeof CHART_COUNTS)[number];
 const RESOLUTIONS = ["5", "15", "60", "240", "1D", "1W"] as const;
 type Resolution = (typeof RESOLUTIONS)[number];
 const RESOLUTION_LABELS: Record<Resolution, string> = {
@@ -29,31 +32,49 @@ const loadResolution = (): Resolution => {
   return "5";
 };
 
-const loadSymbols = (): string[] => {
+const normalizeSymbolsList = (values: string[], count: number): string[] => {
+  const normalized = values.map((entry, index) => {
+    const fallback = DEFAULT_SYMBOLS[index] ?? DEFAULT_SYMBOLS[0];
+    const value = String(entry ?? "").trim();
+    if (!value) return fallback;
+    const next = normalizeSymbol(value);
+    return next || fallback;
+  });
+  const trimmed = normalized.slice(0, count);
+  while (trimmed.length < count) {
+    trimmed.push(DEFAULT_SYMBOLS[trimmed.length] ?? DEFAULT_SYMBOLS[0]);
+  }
+  return trimmed;
+};
+
+const loadSymbols = (count: number): string[] => {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as string[];
       if (Array.isArray(parsed)) {
-        const normalized = parsed
-          .map((entry, index) => {
-            const fallback = DEFAULT_SYMBOLS[index] ?? DEFAULT_SYMBOLS[0];
-            const value = String(entry ?? "").trim();
-            if (!value) return fallback;
-            const next = normalizeSymbol(value);
-            return next || fallback;
-          })
-          .slice(0, 4);
-        while (normalized.length < 4) {
-          normalized.push(DEFAULT_SYMBOLS[normalized.length]);
-        }
-        return normalized;
+        return normalizeSymbolsList(parsed, count);
       }
     }
   } catch (error) {
     // Ignore storage errors
   }
-  return [...DEFAULT_SYMBOLS];
+  return normalizeSymbolsList(DEFAULT_SYMBOLS, count);
+};
+
+const loadChartCount = (): ChartCount => {
+  try {
+    const stored = localStorage.getItem(CHART_COUNT_KEY);
+    if (stored) {
+      const parsed = Number(stored);
+      if (CHART_COUNTS.includes(parsed as ChartCount)) {
+        return parsed as ChartCount;
+      }
+    }
+  } catch (error) {
+    // Ignore storage errors
+  }
+  return 4;
 };
 
 const getSymbolOptions = (): string[] => {
@@ -64,7 +85,12 @@ const getSymbolOptions = (): string[] => {
 };
 
 const ChartsGrid: Component = () => {
-  const [symbols, setSymbols] = createSignal<string[]>(loadSymbols());
+  const initialChartCount = loadChartCount();
+  const [chartCount, setChartCount] =
+    createSignal<ChartCount>(initialChartCount);
+  const [symbols, setSymbols] = createSignal<string[]>(
+    loadSymbols(initialChartCount),
+  );
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [resolution, setResolution] =
     createSignal<Resolution>(loadResolution());
@@ -97,6 +123,36 @@ const ChartsGrid: Component = () => {
     } catch (error) {
       // Ignore storage errors
     }
+  });
+
+  createEffect(() => {
+    const count = chartCount();
+    setSymbols((prev) => {
+      const next = normalizeSymbolsList(prev, count);
+      if (
+        next.length === prev.length &&
+        next.every((value, index) => value === prev[index])
+      ) {
+        return prev;
+      }
+      return next;
+    });
+    try {
+      localStorage.setItem(CHART_COUNT_KEY, String(count));
+    } catch (error) {
+      // Ignore storage errors
+    }
+  });
+
+  const gridClasses = createMemo(() => {
+    const count = chartCount();
+    if (count === 2) {
+      return "grid-cols-1 grid-rows-2 md:grid-cols-2 md:grid-rows-1";
+    }
+    if (count === 6) {
+      return "grid-cols-1 grid-rows-6 md:grid-cols-2 md:grid-rows-3";
+    }
+    return "grid-cols-1 grid-rows-4 md:grid-cols-2 md:grid-rows-2";
   });
 
   return (
@@ -134,6 +190,22 @@ const ChartsGrid: Component = () => {
                 </span>
               </div>
               <div class="space-y-2 px-3 py-3">
+                <div class="flex items-center justify-between gap-2 text-xs text-brand-slate-300">
+                  <span>Charts</span>
+                  <select
+                    class="rounded border border-brand-border bg-brand-screen px-2 py-1 text-xs text-slate-200 focus:border-brand-accent"
+                    value={chartCount()}
+                    onChange={(event) =>
+                      setChartCount(
+                        Number(event.currentTarget.value) as ChartCount,
+                      )
+                    }
+                  >
+                    {CHART_COUNTS.map((count) => (
+                      <option value={count}>{count}</option>
+                    ))}
+                  </select>
+                </div>
                 <div class="flex items-center justify-between gap-2 text-xs text-brand-slate-300">
                   <span>Resolution</span>
                   <select
@@ -174,7 +246,9 @@ const ChartsGrid: Component = () => {
         )}
       </div>
 
-      <div class="grid h-full grid-cols-1 grid-rows-4 gap-px bg-brand-border md:grid-cols-2 md:grid-rows-2">
+      <div
+        class={`grid h-full gap-px bg-brand-border ${gridClasses()}`}
+      >
         {symbols().map((symbol) => (
           <div class="relative flex min-h-0 flex-col bg-brand-screen">
             <div class="absolute left-3 top-3 z-10 rounded-md border border-brand-border bg-brand-surface/80 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-slate-200">
