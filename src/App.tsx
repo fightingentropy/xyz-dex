@@ -384,6 +384,26 @@ const App: Component = () => {
             </svg>
             <span class="text-xs">Vaults</span>
           </button>
+          <button
+            class={`flex flex-col items-center gap-1 ${currentPage() === "charts" ? "text-brand-accent" : "text-brand-slate-400"}`}
+            onClick={() => setCurrentPage("charts")}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M3 3v18h18" />
+              <path d="m7 14 3-3 3 3 5-6" />
+            </svg>
+            <span class="text-xs">Charts</span>
+          </button>
           <Show when={isAdmin()}>
             <button
               class={`flex flex-col items-center gap-1 ${currentPage() === "admin" ? "text-brand-accent" : "text-brand-slate-400"}`}
