@@ -14,6 +14,10 @@ import {
   setSearchOpen,
   selectMarket,
   toggleWatchlist,
+  addToWatchlist,
+  toggleTickerWatchlist,
+  isTickerWatchlisted,
+  isWatchlisted,
   marketsLoading,
 } from "../stores/market";
 import { formatVolume, formatPercent } from "../lib/hyperliquid";
@@ -201,7 +205,7 @@ const SymbolSearch: Component = () => {
       if (!matchesQuery) return false;
 
       if (f === "all") return true;
-      if (f === "watchlist") return m.watchlist;
+      if (f === "watchlist") return isTickerWatchlisted(m.symbol, m.type);
       if (f === "perps-xyz") return m.type === "equities";
       if (f === "perps-hl") return m.type === "perps";
       if (f === "spot") return m.type === "spot";
@@ -557,10 +561,13 @@ const SymbolSearch: Component = () => {
                     class="star-cell"
                     onClick={(e) => {
                       e.stopPropagation();
-                      toggleWatchlist(market.symbol);
+                      // Add to main watchlist (shown in WatchlistPanel)
+                      addToWatchlist(market.symbol);
+                      // Also toggle ticker watchlist for backward compatibility
+                      toggleTickerWatchlist(market.symbol, market.type);
                     }}
                   >
-                    <StarIcon active={market.watchlist} />
+                    <StarIcon active={isWatchlisted(market.symbol) || isTickerWatchlisted(market.symbol, market.type)} />
                   </div>
                 </button>
               );

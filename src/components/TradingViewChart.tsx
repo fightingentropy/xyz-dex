@@ -29,6 +29,7 @@ import {
   currentMarketType,
   dataProvider,
   selectMarket,
+  isTickerWatchlisted,
   type DataProvider,
 } from "../stores/market";
 import { getPositionForSymbol } from "../stores/clob";
@@ -174,7 +175,7 @@ const TradingViewChart: Component = () => {
     const deduped = new Map<string, (typeof list)[number]>();
 
     for (const market of list) {
-      if (!market.watchlist) continue;
+      if (!isTickerWatchlisted(market.symbol, market.type)) continue;
       const existing = deduped.get(market.symbol);
       if (!existing || (existing.type !== "perps" && market.type === "perps")) {
         deduped.set(market.symbol, market);
