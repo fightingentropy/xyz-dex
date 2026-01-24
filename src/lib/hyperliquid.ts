@@ -7,6 +7,71 @@ import {
 import type { OrderBookLevel, L2Book } from "./format";
 
 const INFO_URL = "https://api.hyperliquid.xyz/info";
+const INFO_MIN_INTERVAL_MS = 300;
+const INFO_RATE_LIMIT_COOLDOWN_MS = 2500;
+let infoLastRequestAt = 0;
+let infoRateLimitedUntil = 0;
+let infoQueue: Promise<void> = Promise.resolve();
+
+const delayWithAbort = (ms: number, signal?: AbortSignal): Promise<void> => {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    if (!signal) return;
+    if (signal.aborted) {
+      clearTimeout(timer);
+      resolve();
+      return;
+    }
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(timer);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+};
+
+const postHyperliquidInfo = async (
+  payload: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<Response | null> => {
+  const run = async () => {
+    if (signal?.aborted) return null;
+    const now = Date.now();
+    if (now < infoRateLimitedUntil) return null;
+    const waitMs = Math.max(0, infoLastRequestAt + INFO_MIN_INTERVAL_MS - now);
+    if (waitMs > 0) {
+      await delayWithAbort(waitMs, signal);
+      if (signal?.aborted) return null;
+    }
+    infoLastRequestAt = Date.now();
+    const response = await fetch(INFO_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (response.status === 429) {
+      const retryAfter = response.headers.get("retry-after");
+      const retryMs = retryAfter ? Number(retryAfter) * 1000 : NaN;
+      const cooldownMs = Number.isFinite(retryMs)
+        ? retryMs
+        : INFO_RATE_LIMIT_COOLDOWN_MS;
+      infoRateLimitedUntil = Date.now() + cooldownMs;
+    }
+    return response;
+  };
+
+  const task = infoQueue.then(run, run);
+  infoQueue = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  return task;
+};
 
 export interface AssetMeta {
   name: string;
@@ -97,14 +162,9 @@ export const fetchMetaAndAssetCtxs = async (
     const payload = options?.dex
       ? { type: "metaAndAssetCtxs", dex: options.dex }
       : { type: "metaAndAssetCtxs" };
-    const response = await fetch(INFO_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal,
-    });
+    const response = await postHyperliquidInfo(payload, signal);
 
-    if (!response.ok) return null;
+    if (!response || !response.ok) return null;
     const data = await response.json();
 
     // The response is an array [universe, assetCtxs]
@@ -131,14 +191,12 @@ export const fetchSpotMetaAndAssetCtxs = async (
   signal?: AbortSignal,
 ): Promise<SpotMetaAndAssetCtxs | null> => {
   try {
-    const response = await fetch(INFO_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "spotMetaAndAssetCtxs" }),
+    const response = await postHyperliquidInfo(
+      { type: "spotMetaAndAssetCtxs" },
       signal,
-    });
+    );
 
-    if (!response.ok) return null;
+    if (!response || !response.ok) return null;
     const data = await response.json();
 
     // Response is [meta, assetCtxs]
@@ -217,13 +275,9 @@ export const fetchHyperliquidCandles = async ({
   };
 
   try {
-    const response = await fetch(INFO_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal,
-    });
+    const response = await postHyperliquidInfo(payload, signal);
 
+    if (!response) return [];
     if (!response.ok) {
       if (response.status === 429) return [];
       throw new Error(`Hyperliquid candles failed: ${response.status}`);

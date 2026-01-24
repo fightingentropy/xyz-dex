@@ -39,6 +39,7 @@ interface SymbolChartProps {
 }
 
 const MAX_LOCAL_CANDLES = 1000;
+const CANDLE_LOAD_DEBOUNCE_MS = 400;
 
 const SymbolChart: Component<SymbolChartProps> = (props) => {
   let containerRef: HTMLDivElement | undefined;
@@ -49,6 +50,9 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
   let reconnectTimer: number | undefined;
   let streamTimer: number | undefined;
   let streamGeneration = 0;
+  let loadController: AbortController | undefined;
+  let loadTimer: number | undefined;
+  let loadGeneration = 0;
   let lastLoadedKey: string | undefined;
   let localCandles: Candle[] = [];
 
@@ -132,6 +136,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     fromMs: number,
     toMs: number,
     marketType: "perps" | "spot" | "equities",
+    signal?: AbortSignal,
   ) => {
     if (provider === "lighter") {
       return fetchLighterCandles({
@@ -140,6 +145,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
         fromMs,
         toMs,
         marketType: marketType === "spot" ? "spot" : "perps",
+        signal,
       });
     }
     return fetchHyperliquidCandles({
@@ -147,6 +153,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
       resolution,
       fromMs,
       toMs,
+      signal,
     });
   };
 
@@ -154,8 +161,10 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     symbol: string,
     resolution: string,
     provider: DataProvider,
+    signal?: AbortSignal,
+    requestId?: number,
   ) => {
-    if (!chartReady() || !candleSeries) return;
+    if (!chartReady() || !candleSeries || requestId !== loadGeneration) return;
 
     const marketType = currentMarketType();
     const cacheSymbol = `${symbol}-${marketType}`;
@@ -167,11 +176,15 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
 
     if (cached && cached.candles.length > 0) {
       if (lastLoadedKey !== cacheKey) {
+        if (requestId !== loadGeneration) return;
         candleSeries.setData(formatCandleData(cached.candles));
         volumeSeries?.setData(formatVolumeData(cached.candles));
         lastLoadedKey = cacheKey;
       }
       localCandles = cached.candles;
+      if (!signal?.aborted && requestId === loadGeneration) {
+        setIsLoading(false);
+      }
 
       const fromMs = cached.lastTimestamp - periodMs * 2;
 
@@ -183,8 +196,10 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
           fromMs,
           now,
           marketType,
+          signal,
         );
 
+        if (signal?.aborted || requestId !== loadGeneration) return;
         if (newCandles.length > 0) {
           const mergedCandles = updateCachedCandles(
             provider,
@@ -201,11 +216,11 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
         console.error("Failed to fetch new candles:", error);
       }
 
-      setIsLoading(false);
       return;
     }
 
     if (lastLoadedKey !== cacheKey) {
+      if (requestId !== loadGeneration) return;
       candleSeries.setData([]);
       volumeSeries?.setData([]);
       localCandles = [];
@@ -224,8 +239,10 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
         fromMs,
         now,
         marketType,
+        signal,
       );
 
+      if (signal?.aborted || requestId !== loadGeneration) return;
       if (candles.length > 0) {
         updateCachedCandles(provider, cacheSymbol, resolution, candles, true);
         candleSeries.setData(formatCandleData(candles));
@@ -239,7 +256,9 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     } catch (error) {
       console.error("Failed to load candles:", error);
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted && requestId === loadGeneration) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -535,6 +554,8 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
 
     onCleanup(() => {
       stopStreaming();
+      if (loadTimer) clearTimeout(loadTimer);
+      loadController?.abort();
       resizeObserver.disconnect();
       document.removeEventListener("click", closeContextMenu);
       chart?.remove();
@@ -548,12 +569,36 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     const visible = isTabVisible();
     const provider = dataProvider();
 
-    if (ready && visible) {
-      loadCandles(symbol, resolution, provider);
-      startStreaming(symbol, resolution, provider);
-    } else if (ready) {
-      stopStreaming();
+    if (loadTimer) {
+      clearTimeout(loadTimer);
+      loadTimer = undefined;
     }
+    loadController?.abort();
+    loadController = undefined;
+
+    if (!ready) return;
+    if (!visible) {
+      stopStreaming();
+      return;
+    }
+
+    stopStreaming();
+    const requestId = (loadGeneration += 1);
+    const controller = new AbortController();
+    loadController = controller;
+
+    loadTimer = setTimeout(() => {
+      loadTimer = undefined;
+      if (requestId !== loadGeneration) return;
+      void loadCandles(
+        symbol,
+        resolution,
+        provider,
+        controller.signal,
+        requestId,
+      );
+      startStreaming(symbol, resolution, provider);
+    }, CANDLE_LOAD_DEBOUNCE_MS) as unknown as number;
   });
 
   const resetChart = () => {

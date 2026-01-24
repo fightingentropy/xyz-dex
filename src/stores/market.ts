@@ -1094,6 +1094,11 @@ const formatLighterLeverage = (fraction?: number): string => {
 
 const LIVE_PRICE_RESOLUTION = "1";
 const LIVE_PRICE_LOOKBACK = 2;
+const LIVE_PRICE_MIN_FETCH_MS = 15000;
+const hyperliquidLivePriceCache = new Map<
+  string,
+  { price: number; ts: number }
+>();
 
 const formatLiveMarkPrice = (value: number, provider: DataProvider): string =>
   provider === "hyperliquid" ? formatPrice(value) : formatPriceValue(value);
@@ -1122,6 +1127,12 @@ const fetchHyperliquidLivePrice = async (
   signal?: AbortSignal,
 ): Promise<number | null> => {
   const now = Date.now();
+  const cacheKey = normalizeSymbol(symbol);
+  const cached = hyperliquidLivePriceCache.get(cacheKey);
+  if (cached && now - cached.ts < LIVE_PRICE_MIN_FETCH_MS) {
+    return cached.price;
+  }
+  if (signal?.aborted) return cached?.price ?? null;
   const periodMs = resolutionToMs(LIVE_PRICE_RESOLUTION);
   const fromMs = now - periodMs * LIVE_PRICE_LOOKBACK;
   const candles = await fetchHyperliquidCandles({
@@ -1133,7 +1144,11 @@ const fetchHyperliquidLivePrice = async (
   });
   const latest = candles[candles.length - 1];
   if (!latest || !Number.isFinite(latest.close)) return null;
-  return latest.close > 0 ? latest.close : null;
+  const price = latest.close > 0 ? latest.close : null;
+  if (price != null) {
+    hyperliquidLivePriceCache.set(cacheKey, { price, ts: now });
+  }
+  return price;
 };
 
 const fetchLighterLivePrice = async (
@@ -1649,11 +1664,27 @@ export const useLivePrices = (options?: { enabled?: () => boolean }) => {
     }, delayMs) as unknown as number;
   };
 
-  // React to symbol changes and enabled state
   createEffect(() => {
     const enabled = isEnabled();
-    // Track currentSymbol to trigger immediate refresh on symbol change
-    currentSymbol();
+    const symbol = currentSymbol();
+    const marketType = currentMarketType();
+    if (!enabled) return;
+
+    const list = untrack(() => markets());
+    if (list.length > 0) {
+      const match =
+        list.find(
+          (market) => market.symbol === symbol && market.type === marketType,
+        ) ?? list.find((market) => market.symbol === symbol);
+      if (match) updateCurrentStatsFromMarket(match);
+    }
+
+    scheduleLivePrices(LIVE_PRICE_DEBOUNCE_MS);
+  });
+
+  // React to provider/watchlist changes and enabled state
+  createEffect(() => {
+    const enabled = isEnabled();
     dataProvider();
     trackedAssetsKey();
 

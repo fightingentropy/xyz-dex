@@ -99,11 +99,14 @@ const TICKER_ORDER_TYPES = new Set(["perps", "spot", "equities"]);
 const normalizeTickerOrderSymbol = (entry: string): string => {
   const parts = entry.split(":");
   const last = parts[parts.length - 1];
-  const raw = TICKER_ORDER_TYPES.has(last) ? parts.slice(0, -1).join(":") : entry;
+  const raw = TICKER_ORDER_TYPES.has(last)
+    ? parts.slice(0, -1).join(":")
+    : entry;
   return getWatchlistCoreSymbol(raw);
 };
 
 const MAX_LOCAL_CANDLES = 1000;
+const CANDLE_LOAD_DEBOUNCE_MS = 400;
 
 const formatExposure = (size: number) => {
   if (!Number.isFinite(size) || size === 0) return "";
@@ -136,7 +139,6 @@ const loadMaSettings = (): Record<MaPeriod, boolean> => {
   return DEFAULT_MA_ENABLED;
 };
 
-
 const TradingViewChart: Component = () => {
   let containerRef: HTMLDivElement | undefined;
   let chart: IChartApi | undefined;
@@ -146,6 +148,9 @@ const TradingViewChart: Component = () => {
   let reconnectTimer: number | undefined;
   let streamTimer: number | undefined;
   let streamGeneration = 0;
+  let loadController: AbortController | undefined;
+  let loadTimer: number | undefined;
+  let loadGeneration = 0;
   let lastLoadedKey: string | undefined;
   const maSeries = new Map<MaPeriod, ISeriesApi<"Line">>();
   let localCandles: Candle[] = [];
@@ -356,6 +361,7 @@ const TradingViewChart: Component = () => {
     fromMs: number,
     toMs: number,
     marketType: "perps" | "spot" | "equities",
+    signal?: AbortSignal,
   ) => {
     if (provider === "lighter") {
       return fetchLighterCandles({
@@ -364,6 +370,7 @@ const TradingViewChart: Component = () => {
         fromMs,
         toMs,
         marketType: marketType === "spot" ? "spot" : "perps",
+        signal,
       });
     }
     return fetchHyperliquidCandles({
@@ -371,6 +378,7 @@ const TradingViewChart: Component = () => {
       resolution: res,
       fromMs,
       toMs,
+      signal,
     });
   };
 
@@ -379,9 +387,11 @@ const TradingViewChart: Component = () => {
     symbol: string,
     res: Resolution,
     provider: DataProvider,
+    signal?: AbortSignal,
+    requestId?: number,
   ) => {
     // Don't load if chart isn't ready
-    if (!chartReady() || !candleSeries) {
+    if (!chartReady() || !candleSeries || requestId !== loadGeneration) {
       return;
     }
 
@@ -397,6 +407,7 @@ const TradingViewChart: Component = () => {
     if (cached && cached.candles.length > 0) {
       // Only set loading if this is a different symbol/resolution
       if (lastLoadedKey !== cacheKey) {
+        if (requestId !== loadGeneration) return;
         candleSeries.setData(formatCandleData(cached.candles));
         if (volumeSeries) {
           volumeSeries.setData(formatVolumeData(cached.candles));
@@ -405,6 +416,9 @@ const TradingViewChart: Component = () => {
       }
       localCandles = cached.candles;
       refreshMovingAveragesFull(localCandles);
+      if (!signal?.aborted && requestId === loadGeneration) {
+        setIsLoading(false);
+      }
 
       // Fetch only new candles since last cached timestamp
       // Add a small overlap to ensure we don't miss any candles
@@ -418,8 +432,10 @@ const TradingViewChart: Component = () => {
           fromMs,
           now,
           marketType,
+          signal,
         );
 
+        if (signal?.aborted || requestId !== loadGeneration) return;
         if (newCandles.length > 0) {
           // Merge with cache and update chart
           const mergedCandles = updateCachedCandles(
@@ -441,12 +457,12 @@ const TradingViewChart: Component = () => {
         // Still showing cached data, so no need to show error state
       }
 
-      setIsLoading(false);
       return;
     }
 
     // No cache - do a full load
     if (lastLoadedKey !== cacheKey) {
+      if (requestId !== loadGeneration) return;
       candleSeries.setData([]);
       if (volumeSeries) {
         volumeSeries.setData([]);
@@ -468,8 +484,10 @@ const TradingViewChart: Component = () => {
         fromMs,
         now,
         marketType,
+        signal,
       );
 
+      if (signal?.aborted || requestId !== loadGeneration) return;
       if (candles.length > 0) {
         // Cache the full data set
         updateCachedCandles(provider, cacheSymbol, res, candles, true);
@@ -492,7 +510,9 @@ const TradingViewChart: Component = () => {
     } catch (error) {
       console.error("Failed to load candles:", error);
     } finally {
-      setIsLoading(false);
+      if (!signal?.aborted && requestId === loadGeneration) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -828,6 +848,8 @@ const TradingViewChart: Component = () => {
 
     onCleanup(() => {
       stopStreaming();
+      if (loadTimer) clearTimeout(loadTimer);
+      loadController?.abort();
       resizeObserver.disconnect();
       document.removeEventListener("click", closeContextMenu);
       chart?.remove();
@@ -842,12 +864,30 @@ const TradingViewChart: Component = () => {
     const visible = isTabVisible();
     const provider = dataProvider();
 
-    if (ready && visible) {
-      loadCandles(symbol, res, provider);
-      startStreaming(symbol, res, provider);
-    } else if (ready) {
-      stopStreaming();
+    if (loadTimer) {
+      clearTimeout(loadTimer);
+      loadTimer = undefined;
     }
+    loadController?.abort();
+    loadController = undefined;
+
+    if (!ready) return;
+    if (!visible) {
+      stopStreaming();
+      return;
+    }
+
+    stopStreaming();
+    const requestId = (loadGeneration += 1);
+    const controller = new AbortController();
+    loadController = controller;
+
+    loadTimer = setTimeout(() => {
+      loadTimer = undefined;
+      if (requestId !== loadGeneration) return;
+      void loadCandles(symbol, res, provider, controller.signal, requestId);
+      startStreaming(symbol, res, provider);
+    }, CANDLE_LOAD_DEBOUNCE_MS) as unknown as number;
   });
 
   createEffect(() => {
