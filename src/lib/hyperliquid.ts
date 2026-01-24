@@ -225,6 +225,7 @@ export const fetchHyperliquidCandles = async ({
     });
 
     if (!response.ok) {
+      if (response.status === 429) return [];
       throw new Error(`Hyperliquid candles failed: ${response.status}`);
     }
 

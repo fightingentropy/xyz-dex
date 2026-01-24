@@ -13,7 +13,6 @@ import {
   searchOpen,
   setSearchOpen,
   selectMarket,
-  toggleWatchlist,
   addToWatchlist,
   toggleTickerWatchlist,
   isTickerWatchlisted,
@@ -188,35 +187,25 @@ const SymbolSearch: Component = () => {
   const [selectedIdx, setSelectedIdx] = createSignal(0);
   const [sortColumn, setSortColumn] = createSignal<SortColumn>("volume");
   const [sortDirection, setSortDirection] = createSignal<SortDirection>("desc");
+  const [scrollTop, setScrollTop] = createSignal(0);
+  const [listHeight, setListHeight] = createSignal(0);
+  const [rowHeight, setRowHeight] = createSignal(72);
   let inputRef: HTMLInputElement | undefined;
   let listRef: HTMLDivElement | undefined;
+  let resizeObserver: ResizeObserver | undefined;
+  const overscan = 6;
 
-  const filteredMarkets = createMemo(() => {
+  const normalizedQuery = createMemo(() => query().trim().toLowerCase());
+
+  const sortedMarkets = createMemo(() => {
     if (!searchOpen()) return [];
-    const q = query().toLowerCase();
-    const f = filter();
-    const allMarkets = MARKETS();
-
-    let results = allMarkets.filter((m) => {
-      const matchesQuery =
-        !q ||
-        m.name.toLowerCase().includes(q) ||
-        m.symbol.toLowerCase().includes(q);
-      if (!matchesQuery) return false;
-
-      if (f === "all") return true;
-      if (f === "watchlist") return isTickerWatchlisted(m.symbol, m.type);
-      if (f === "perps-xyz") return m.type === "equities";
-      if (f === "perps-hl") return m.type === "perps";
-      if (f === "spot") return m.type === "spot";
-      return true;
-    });
-
-    // Sort results
     const col = sortColumn();
-    const dir = sortDirection();
-    results = [...results].sort((a, b) => {
-      let aVal: number, bVal: number;
+    const dir = sortDirection() === "desc" ? -1 : 1;
+    const markets = MARKETS();
+    const results = [...markets];
+    results.sort((a, b) => {
+      let aVal: number;
+      let bVal: number;
       switch (col) {
         case "volume":
           aVal = a.volume24h;
@@ -238,11 +227,86 @@ const SymbolSearch: Component = () => {
           aVal = a.volume24h;
           bVal = b.volume24h;
       }
-      return dir === "desc" ? bVal - aVal : aVal - bVal;
+      return (aVal - bVal) * dir;
     });
-
     return results;
   });
+
+  const filteredMarkets = createMemo(() => {
+    if (!searchOpen()) return [];
+    const q = normalizedQuery();
+    const f = filter();
+    const base = sortedMarkets();
+    if (!q && f === "all") return base;
+    const results: ReturnType<typeof MARKETS> = [];
+    for (const market of base) {
+      if (
+        q &&
+        !market.name.toLowerCase().includes(q) &&
+        !market.symbol.toLowerCase().includes(q)
+      ) {
+        continue;
+      }
+      if (f === "watchlist" && !isTickerWatchlisted(market.symbol, market.type)) {
+        continue;
+      }
+      if (f === "perps-xyz" && market.type !== "equities") {
+        continue;
+      }
+      if (f === "perps-hl" && market.type !== "perps") {
+        continue;
+      }
+      if (f === "spot" && market.type !== "spot") {
+        continue;
+      }
+      results.push(market);
+    }
+    return results;
+  });
+
+  const totalMarkets = createMemo(() => filteredMarkets().length);
+
+  const startIndex = createMemo(() => {
+    const height = rowHeight();
+    if (height <= 0) return 0;
+    return Math.max(0, Math.floor(scrollTop() / height) - overscan);
+  });
+
+  const endIndex = createMemo(() => {
+    const height = rowHeight();
+    if (height <= 0) return 0;
+    const visibleCount = Math.ceil(listHeight() / height) + overscan * 2;
+    return Math.min(totalMarkets(), startIndex() + visibleCount);
+  });
+
+  const visibleMarkets = createMemo(() =>
+    filteredMarkets().slice(startIndex(), endIndex()),
+  );
+
+  const topSpacerHeight = createMemo(() => startIndex() * rowHeight());
+  const bottomSpacerHeight = createMemo(
+    () => (totalMarkets() - endIndex()) * rowHeight(),
+  );
+
+  const updateListMetrics = () => {
+    if (!listRef) return;
+    setListHeight(listRef.clientHeight);
+    const row = listRef.querySelector<HTMLElement>(".market-row");
+    if (row) {
+      const nextHeight = Math.max(1, Math.round(row.getBoundingClientRect().height));
+      setRowHeight(nextHeight);
+    }
+  };
+
+  const setListRef = (el: HTMLDivElement) => {
+    listRef = el;
+    updateListMetrics();
+  };
+
+  const handleScroll = () => {
+    if (!listRef) return;
+    setScrollTop(listRef.scrollTop);
+  };
 
   const handleSort = (column: SortColumn) => {
     if (sortColumn() === column) {
@@ -255,18 +319,31 @@ const SymbolSearch: Component = () => {
 
   const scrollToSelected = () => {
     if (!listRef) return;
-    const row = listRef.querySelector(`[data-idx="${selectedIdx()}"]`);
-    if (row) {
-      row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    const height = rowHeight();
+    if (height <= 0) return;
+    const viewHeight = listHeight() || listRef.clientHeight;
+    const targetTop = selectedIdx() * height;
+    const targetBottom = targetTop + height;
+    const viewTop = listRef.scrollTop;
+    const viewBottom = viewTop + viewHeight;
+    if (targetTop < viewTop) {
+      listRef.scrollTo({ top: targetTop, behavior: "smooth" });
+    } else if (targetBottom > viewBottom) {
+      listRef.scrollTo({
+        top: targetBottom - viewHeight,
+        behavior: "smooth",
+      });
     }
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
+    const markets = filteredMarkets();
+    const maxIndex = Math.max(0, markets.length - 1);
     if (e.key === "Escape") {
       setSearchOpen(false);
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIdx((i) => Math.min(i + 1, filteredMarkets().length - 1));
+      setSelectedIdx((i) => Math.min(i + 1, maxIndex));
       requestAnimationFrame(scrollToSelected);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
@@ -274,7 +351,7 @@ const SymbolSearch: Component = () => {
       requestAnimationFrame(scrollToSelected);
     } else if (e.key === "Enter") {
       e.preventDefault();
-      const market = filteredMarkets()[selectedIdx()];
+      const market = markets[selectedIdx()];
       if (market) {
         selectMarket(market);
       }
@@ -284,7 +361,7 @@ const SymbolSearch: Component = () => {
       requestAnimationFrame(scrollToSelected);
     } else if ((e.metaKey || e.ctrlKey) && e.key === "ArrowDown") {
       e.preventDefault();
-      setSelectedIdx(filteredMarkets().length - 1);
+      setSelectedIdx(maxIndex);
       requestAnimationFrame(scrollToSelected);
     } else if ((e.metaKey || e.ctrlKey) && e.key === "s") {
       e.preventDefault();
@@ -309,10 +386,24 @@ const SymbolSearch: Component = () => {
 
   onMount(() => {
     document.addEventListener("keydown", handleGlobalKeyDown);
+    updateListMetrics();
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => updateListMetrics());
+      if (listRef) {
+        resizeObserver.observe(listRef);
+      }
+    } else {
+      window.addEventListener("resize", updateListMetrics);
+    }
   });
 
   onCleanup(() => {
     document.removeEventListener("keydown", handleGlobalKeyDown);
+    if (resizeObserver) {
+      resizeObserver.disconnect();
+    } else {
+      window.removeEventListener("resize", updateListMetrics);
+    }
   });
 
   // Focus input when modal opens
@@ -322,6 +413,34 @@ const SymbolSearch: Component = () => {
       inputRef?.focus();
       inputRef?.select();
     });
+  });
+
+  createEffect(() => {
+    if (!searchOpen()) return;
+    if (totalMarkets() === 0) return;
+    requestAnimationFrame(updateListMetrics);
+  });
+
+  createEffect(() => {
+    const total = totalMarkets();
+    if (total === 0) {
+      if (selectedIdx() !== 0) {
+        setSelectedIdx(0);
+      }
+      return;
+    }
+    if (selectedIdx() > total - 1) {
+      setSelectedIdx(total - 1);
+    }
+  });
+
+  createEffect(() => {
+    if (!searchOpen() || !listRef) return;
+    const maxScroll = Math.max(0, totalMarkets() * rowHeight() - listHeight());
+    if (listRef.scrollTop > maxScroll) {
+      listRef.scrollTop = maxScroll;
+      setScrollTop(maxScroll);
+    }
   });
 
   // Format price change with absolute value
@@ -376,6 +495,10 @@ const SymbolSearch: Component = () => {
               onInput={(e) => {
                 setQuery(e.currentTarget.value);
                 setSelectedIdx(0);
+                if (listRef) {
+                  listRef.scrollTo({ top: 0 });
+                  setScrollTop(0);
+                }
               }}
               onKeyDown={handleKeyDown}
             />
@@ -455,124 +578,138 @@ const SymbolSearch: Component = () => {
         </div>
 
         {/* Market Rows */}
-        <div ref={listRef} class="market-list">
+        <div ref={setListRef} class="market-list" onScroll={handleScroll}>
           <Show when={marketsLoading()}>
             <div class="loading-state">
               <div class="loading-spinner" />
               <span>Loading markets...</span>
             </div>
           </Show>
-          <For each={filteredMarkets()}>
-            {(market, idx) => {
-              const change = formatPriceChange(market);
-              const isPositive = market.change24h >= 0;
-              const displaySymbol = getDisplaySymbol(market.symbol);
-              const iconSrc =
-                ICON_SOURCES[displaySymbol] ??
-                `/${displaySymbol.toLowerCase()}.svg`;
+          <Show when={!marketsLoading()}>
+            <Show when={topSpacerHeight() > 0}>
+              <div style={{ height: `${topSpacerHeight()}px` }} />
+            </Show>
+            <For each={visibleMarkets()}>
+              {(market, idx) => {
+                const change = formatPriceChange(market);
+                const isPositive = market.change24h >= 0;
+                const displaySymbol = getDisplaySymbol(market.symbol);
+                const iconSrc =
+                  ICON_SOURCES[displaySymbol] ??
+                  `/${displaySymbol.toLowerCase()}.svg`;
+                const absoluteIdx = () => idx() + startIndex();
 
-              return (
-                <button
-                  type="button"
-                  data-idx={idx()}
-                  class={`market-row ${idx() === selectedIdx() ? "selected" : ""}`}
-                  onClick={() => selectMarket(market)}
-                >
-                  <div class="market-info">
-                    <Show
-                      when={ICON_SYMBOLS.has(displaySymbol)}
-                      fallback={
-                        <div
-                          class={`market-icon bg-linear-to-br ${getIconGradient(displaySymbol)}`}
-                        >
-                          <span>{getIconLabel(displaySymbol)}</span>
+                return (
+                  <button
+                    type="button"
+                    data-idx={absoluteIdx()}
+                    class={`market-row ${absoluteIdx() === selectedIdx() ? "selected" : ""}`}
+                    onClick={() => selectMarket(market)}
+                  >
+                    <div class="market-info">
+                      <Show
+                        when={ICON_SYMBOLS.has(displaySymbol)}
+                        fallback={
+                          <div
+                            class={`market-icon bg-linear-to-br ${getIconGradient(displaySymbol)}`}
+                          >
+                            <span>{getIconLabel(displaySymbol)}</span>
+                          </div>
+                        }
+                      >
+                        <div class="market-icon">
+                          <img
+                            src={iconSrc}
+                            alt={displaySymbol}
+                            class="coin-logo"
+                          />
                         </div>
-                      }
-                    >
-                      <div class="market-icon">
-                        <img
-                          src={iconSrc}
-                          alt={displaySymbol}
-                          class="coin-logo"
-                        />
+                      </Show>
+                      <div class="market-details">
+                        <div class="market-name-row">
+                          <span class="market-name">
+                            {market.type === "equities"
+                              ? `[${market.name}]`
+                              : market.name}
+                          </span>
+                          <span class="leverage-badge">
+                            {market.type === "spot" ? "Spot" : market.leverage}
+                          </span>
+                          {market.type === "equities" && (
+                            <span class="xyz-badge">XYZ</span>
+                          )}
+                        </div>
+                        <span class="market-price">${market.price}</span>
                       </div>
-                    </Show>
-                    <div class="market-details">
-                      <div class="market-name-row">
-                        <span class="market-name">
-                          {market.type === "equities"
-                            ? `[${market.name}]`
-                            : market.name}
-                        </span>
-                        <span class="leverage-badge">
-                          {market.type === "spot" ? "Spot" : market.leverage}
-                        </span>
-                        {market.type === "equities" && (
-                          <span class="xyz-badge">XYZ</span>
+                    </div>
+
+                    <div
+                      class={`change-cell ${isPositive ? "positive" : "negative"}`}
+                    >
+                      <div class="change-indicator">
+                        {isPositive ? (
+                          <TrendingUpIcon class="trend-icon" />
+                        ) : (
+                          <TrendingDownIcon class="trend-icon" />
                         )}
                       </div>
-                      <span class="market-price">${market.price}</span>
+                      <div class="change-values">
+                        <span class="change-absolute">
+                          {change.sign}${change.absFormatted}
+                        </span>
+                        <span class="change-percent">{change.percent}</span>
+                      </div>
                     </div>
-                  </div>
 
-                  <div
-                    class={`change-cell ${isPositive ? "positive" : "negative"}`}
-                  >
-                    <div class="change-indicator">
-                      {isPositive ? (
-                        <TrendingUpIcon class="trend-icon" />
-                      ) : (
-                        <TrendingDownIcon class="trend-icon" />
-                      )}
-                    </div>
-                    <div class="change-values">
-                      <span class="change-absolute">
-                        {change.sign}${change.absFormatted}
+                    <div class="volume-cell">
+                      <span class="volume-value">
+                        {formatVolume(market.volume24h)}
                       </span>
-                      <span class="change-percent">{change.percent}</span>
                     </div>
-                  </div>
 
-                  <div class="volume-cell">
-                    <span class="volume-value">
-                      {formatVolume(market.volume24h)}
-                    </span>
-                  </div>
+                    <div class="oi-cell">
+                      <span class="oi-value">
+                        {market.type === "spot"
+                          ? "--"
+                          : formatVolume(market.openInterest)}
+                      </span>
+                    </div>
 
-                  <div class="oi-cell">
-                    <span class="oi-value">
-                      {market.type === "spot"
-                        ? "--"
-                        : formatVolume(market.openInterest)}
-                    </span>
-                  </div>
+                    <div
+                      class={`funding-cell ${market.type === "spot" ? "" : market.funding >= 0 ? "positive" : "negative"}`}
+                    >
+                      <span class="funding-value">
+                        {market.type === "spot"
+                          ? "--"
+                          : formatPercent(market.funding)}
+                      </span>
+                    </div>
 
-                  <div
-                    class={`funding-cell ${market.type === "spot" ? "" : market.funding >= 0 ? "positive" : "negative"}`}
-                  >
-                    <span class="funding-value">
-                      {market.type === "spot"
-                        ? "--"
-                        : formatPercent(market.funding)}
-                    </span>
-                  </div>
-
-                  <div
-                    class="star-cell"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      // Add to main watchlist (shown in WatchlistPanel)
-                      addToWatchlist(market.symbol);
-                      // Also toggle ticker watchlist for backward compatibility
-                      toggleTickerWatchlist(market.symbol, market.type);
-                    }}
-                  >
-                    <StarIcon active={isWatchlisted(market.symbol) || isTickerWatchlisted(market.symbol, market.type)} />
-                  </div>
-                </button>
-              );
-            }}
-          </For>
+                    <div
+                      class="star-cell"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // Add to main watchlist (shown in WatchlistPanel)
+                        addToWatchlist(market.symbol);
+                        // Also toggle ticker watchlist for backward compatibility
+                        toggleTickerWatchlist(market.symbol, market.type);
+                      }}
+                    >
+                      <StarIcon
+                        active={
+                          isWatchlisted(market.symbol) ||
+                          isTickerWatchlisted(market.symbol, market.type)
+                        }
+                      />
+                    </div>
+                  </button>
+                );
+              }}
+            </For>
+            <Show when={bottomSpacerHeight() > 0}>
+              <div style={{ height: `${bottomSpacerHeight()}px` }} />
+            </Show>
+          </Show>
         </div>
 
         {/* Footer */}
@@ -599,7 +736,7 @@ const SymbolSearch: Component = () => {
             </div>
           </div>
           <div class="market-count">
-            <span class="count-number">{filteredMarkets().length}</span>
+            <span class="count-number">{totalMarkets()}</span>
             <span class="count-label">markets</span>
           </div>
         </div>

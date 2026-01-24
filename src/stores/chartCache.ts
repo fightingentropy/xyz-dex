@@ -1,12 +1,10 @@
 import type { Candle } from "../lib/candles";
-import type { DataProvider } from "./market";
+import { getAllWatchlistSymbolSet, getWatchlistCoreSymbol, type DataProvider } from "./market";
 
 const CACHE_KEY = "trade-xyz-chart-cache";
-const WATCHLIST_KEY = "trade-xyz-watchlist";
 const CACHE_VERSION = 2;
 const MAX_CACHE_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const MAX_CANDLES_PER_KEY = 1000;
-const DEFAULT_WATCHLIST = ["BTC", "HYPE"];
 
 interface CacheEntry {
   candles: Candle[];
@@ -24,45 +22,22 @@ const memoryCache = new Map<string, CacheEntry>();
 
 const WATCHLIST_SYMBOL_SUFFIX = /-(perps|spot|equities)$/;
 
-let watchlistSnapshot: string | null = null;
-let watchlistSet = new Set<string>();
-
 const normalizeWatchlistSymbol = (symbol: string): string => {
-  return symbol.replace(WATCHLIST_SYMBOL_SUFFIX, "");
-};
-
-const loadWatchlistSet = (): Set<string> => {
-  try {
-    const stored = localStorage.getItem(WATCHLIST_KEY);
-    if (stored === watchlistSnapshot) return watchlistSet;
-    watchlistSnapshot = stored;
-    if (!stored) {
-      watchlistSet = new Set(DEFAULT_WATCHLIST);
-      return watchlistSet;
-    }
-    const parsed = JSON.parse(stored);
-    if (Array.isArray(parsed)) {
-      watchlistSet = new Set(
-        parsed.filter((symbol) => typeof symbol === "string"),
-      );
-      return watchlistSet;
-    }
-  } catch (e) {
-    // Ignore storage errors
-  }
-  watchlistSet = new Set(DEFAULT_WATCHLIST);
-  return watchlistSet;
+  const trimmed = symbol.replace(WATCHLIST_SYMBOL_SUFFIX, "");
+  return getWatchlistCoreSymbol(trimmed);
 };
 
 const isWatchlistedSymbol = (symbol: string): boolean => {
   const baseSymbol = normalizeWatchlistSymbol(symbol);
-  return loadWatchlistSet().has(baseSymbol);
+  if (!baseSymbol) return false;
+  return getAllWatchlistSymbolSet().has(baseSymbol);
 };
 
 const parseSymbolFromKey = (key: string): string | null => {
-  const parts = key.split(":");
-  if (parts.length < 3) return null;
-  return parts[1];
+  const first = key.indexOf(":");
+  const last = key.lastIndexOf(":");
+  if (first < 0 || last < 0 || first === last) return null;
+  return key.slice(first + 1, last);
 };
 
 const shouldKeepKey = (key: string): boolean => {

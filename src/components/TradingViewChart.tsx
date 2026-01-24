@@ -30,6 +30,8 @@ import {
   dataProvider,
   selectMarket,
   isTickerWatchlisted,
+  tickerWatchlistSymbols,
+  getWatchlistCoreSymbol,
   type DataProvider,
 } from "../stores/market";
 import { getPositionForSymbol } from "../stores/clob";
@@ -51,7 +53,6 @@ type Resolution = (typeof RESOLUTIONS)[number];
 const DEFAULT_RESOLUTION: Resolution = "5";
 const RESOLUTION_STORAGE_KEY = "trade-xyz-chart-resolution";
 const MA_STORAGE_KEY = "trade-xyz-chart-ma";
-const WATCHLIST_STORAGE_KEY = "trade-xyz-watchlist";
 
 const RESOLUTION_LABELS: Record<Resolution, string> = {
   "1": "1m",
@@ -93,6 +94,15 @@ const MA_COLORS: Record<MaPeriod, string> = {
   200: "#a3e635",
 };
 
+const TICKER_ORDER_TYPES = new Set(["perps", "spot", "equities"]);
+
+const normalizeTickerOrderSymbol = (entry: string): string => {
+  const parts = entry.split(":");
+  const last = parts[parts.length - 1];
+  const raw = TICKER_ORDER_TYPES.has(last) ? parts.slice(0, -1).join(":") : entry;
+  return getWatchlistCoreSymbol(raw);
+};
+
 const MAX_LOCAL_CANDLES = 1000;
 
 const formatExposure = (size: number) => {
@@ -126,17 +136,6 @@ const loadMaSettings = (): Record<MaPeriod, boolean> => {
   return DEFAULT_MA_ENABLED;
 };
 
-const loadWatchlistOrder = (): string[] => {
-  try {
-    const stored = localStorage.getItem(WATCHLIST_STORAGE_KEY);
-    if (!stored) return [];
-    const parsed = JSON.parse(stored);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((symbol) => typeof symbol === "string");
-  } catch (error) {
-    return [];
-  }
-};
 
 const TradingViewChart: Component = () => {
   let containerRef: HTMLDivElement | undefined;
@@ -170,8 +169,14 @@ const TradingViewChart: Component = () => {
   const watchlistMarkets = createMemo(() => {
     const list = MARKETS();
     if (list.length === 0) return [];
-    const order = loadWatchlistOrder();
-    const orderIndex = new Map(order.map((symbol, index) => [symbol, index]));
+    const order = tickerWatchlistSymbols();
+    const orderIndex = new Map<string, number>();
+    order.forEach((entry, index) => {
+      const key = normalizeTickerOrderSymbol(entry);
+      if (!orderIndex.has(key)) {
+        orderIndex.set(key, index);
+      }
+    });
     const deduped = new Map<string, (typeof list)[number]>();
 
     for (const market of list) {
@@ -184,8 +189,10 @@ const TradingViewChart: Component = () => {
 
     const result = [...deduped.values()];
     result.sort((a, b) => {
-      const aIndex = orderIndex.get(a.symbol);
-      const bIndex = orderIndex.get(b.symbol);
+      const aKey = getWatchlistCoreSymbol(a.symbol);
+      const bKey = getWatchlistCoreSymbol(b.symbol);
+      const aIndex = orderIndex.get(aKey);
+      const bIndex = orderIndex.get(bKey);
       if (aIndex != null && bIndex != null) return aIndex - bIndex;
       if (aIndex != null) return -1;
       if (bIndex != null) return 1;

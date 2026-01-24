@@ -13,6 +13,7 @@ import { isAuthenticated } from "./auth";
 import {
   fetchMetaAndAssetCtxs,
   fetchSpotMetaAndAssetCtxs,
+  fetchHyperliquidCandles,
   getAssetContext,
   formatPrice,
   formatVolume,
@@ -26,6 +27,7 @@ import {
   getLighterMarketId,
   normalizeLighterSymbol,
 } from "../lib/lighter";
+import { resolutionToMs } from "../lib/candles";
 
 export interface Market {
   symbol: string;
@@ -138,25 +140,38 @@ const saveTickerWatchlist = (symbols: string[]) => {
   }
 };
 
-const [tickerWatchlist, setTickerWatchlist] = createSignal<string[]>(
-  loadTickerWatchlist(),
+const { tickerWatchlist, setTickerWatchlist, tickerWatchlistSet } = createRoot(
+  () => {
+    const [tickerWatchlist, setTickerWatchlist] = createSignal<string[]>(
+      loadTickerWatchlist(),
+    );
+    const tickerWatchlistSet = createMemo(() => new Set(tickerWatchlist()));
+    return { tickerWatchlist, setTickerWatchlist, tickerWatchlistSet };
+  },
 );
-const tickerWatchlistSet = createMemo(() => new Set(tickerWatchlist()));
 const tickerWatchlistSymbols = () => tickerWatchlist();
-const getTickerWatchlistKey = (symbol: string, type?: Market["type"]): string => {
+const getTickerWatchlistKey = (
+  symbol: string,
+  type?: Market["type"],
+): string => {
   if (type) {
     return `${symbol}:${type}`;
   }
   return symbol;
 };
-const isTickerWatchlisted = (symbol: string, type?: Market["type"]): boolean => {
+const isTickerWatchlisted = (
+  symbol: string,
+  type?: Market["type"],
+): boolean => {
   const key = getTickerWatchlistKey(symbol, type);
   // Check exact match first (symbol:type)
   if (tickerWatchlistSet().has(key)) return true;
   // For backward compatibility, also check symbol without type
   if (!type && tickerWatchlistSet().has(symbol)) return true;
   // Check aliases for backward compatibility
-  return getWatchlistAliases(symbol).some((alias) => tickerWatchlistSet().has(alias));
+  return getWatchlistAliases(symbol).some((alias) =>
+    tickerWatchlistSet().has(alias),
+  );
 };
 
 const setTickerWatchlistSymbols = (symbols: string[]) => {
@@ -165,16 +180,19 @@ const setTickerWatchlistSymbols = (symbols: string[]) => {
   saveTickerWatchlist(next);
 };
 
-export const toggleTickerWatchlist = (symbol: string, type?: Market["type"]) => {
+export const toggleTickerWatchlist = (
+  symbol: string,
+  type?: Market["type"],
+) => {
   const currentList = tickerWatchlist();
   const nextSet = new Set(currentList);
   const key = getTickerWatchlistKey(symbol, type);
-  
+
   // Check if exact key exists or if symbol without type exists (for backward compatibility)
   const hasExactKey = nextSet.has(key);
   const aliases = getWatchlistAliases(symbol);
   const hasOldFormat = aliases.some((alias) => nextSet.has(alias));
-  
+
   if (hasExactKey || hasOldFormat) {
     // Remove exact key
     nextSet.delete(key);
@@ -273,33 +291,57 @@ const saveWatchlists = (state: WatchlistsState) => {
       delete cleanedLists["watchlist"];
     }
     // Ensure activeId is not "watchlist"
-    const activeId = state.activeId === "watchlist" ? DEFAULT_WATCHLIST_NAME : state.activeId;
-    localStorage.setItem(WATCHLISTS_KEY, JSON.stringify({ activeId, lists: cleanedLists }));
+    const activeId =
+      state.activeId === "watchlist" ? DEFAULT_WATCHLIST_NAME : state.activeId;
+    localStorage.setItem(
+      WATCHLISTS_KEY,
+      JSON.stringify({ activeId, lists: cleanedLists }),
+    );
   } catch (e) {
     // Ignore
   }
 };
 
-const [watchlists, setWatchlists] =
-  createSignal<WatchlistsState>(loadWatchlists());
-const activeWatchlistId = () => watchlists().activeId;
-const watchlistNames = createMemo(() => Object.keys(watchlists().lists));
-const activeWatchlistSet = createMemo(
-  () => new Set(watchlists().lists[activeWatchlistId()] ?? []),
-);
+const {
+  watchlists,
+  setWatchlists,
+  activeWatchlistId,
+  watchlistNames,
+  activeWatchlistSet,
+  allWatchlistSymbolSet,
+} = createRoot(() => {
+  const [watchlists, setWatchlists] =
+    createSignal<WatchlistsState>(loadWatchlists());
+  const activeWatchlistId = () => watchlists().activeId;
+  const watchlistNames = createMemo(() => Object.keys(watchlists().lists));
+  const activeWatchlistSet = createMemo(
+    () => new Set(watchlists().lists[activeWatchlistId()] ?? []),
+  );
+  const allWatchlistSymbolSet = createMemo(() => {
+    const all = new Set<string>();
+    const lists = watchlists().lists;
+    Object.values(lists).forEach((symbols) => {
+      symbols.forEach((symbol) => {
+        const core = getWatchlistCoreSymbol(symbol);
+        if (core) all.add(core);
+      });
+    });
+    return all;
+  });
+
+  return {
+    watchlists,
+    setWatchlists,
+    activeWatchlistId,
+    watchlistNames,
+    activeWatchlistSet,
+    allWatchlistSymbolSet,
+  };
+});
 export const isWatchlisted = (symbol: string): boolean =>
   getWatchlistAliases(symbol).some((alias) => activeWatchlistSet().has(alias));
-const getAllWatchlistSymbols = (): string[] => {
-  const all = new Set<string>();
-  const lists = watchlists().lists;
-  Object.values(lists).forEach((symbols) => {
-    symbols.forEach((symbol) => {
-      const core = getWatchlistCoreSymbol(symbol);
-      if (core) all.add(core);
-    });
-  });
-  return [...all];
-};
+const getAllWatchlistSymbols = (): string[] => [...allWatchlistSymbolSet()];
+const getAllWatchlistSymbolSet = () => allWatchlistSymbolSet();
 
 const safeNormalizeSymbol = (value?: string | null): string | null => {
   if (!value) return null;
@@ -356,18 +398,24 @@ const { trackedPerps, trackedSpots, trackedAssetsKey } = createRoot(() => {
 });
 
 // Reactive markets store
-const [markets, setMarkets] = createSignal<Market[]>([]);
-const [marketsLoading, setMarketsLoading] = createSignal(true);
+const { markets, setMarkets, marketsLoading, setMarketsLoading } = createRoot(
+  () => {
+    const [markets, setMarkets] = createSignal<Market[]>([]);
+    const [marketsLoading, setMarketsLoading] = createSignal(true);
 
-createEffect(() => {
-  watchlists();
-  setMarkets((prev) =>
-    prev.map((market) => ({
-      ...market,
-      watchlist: isWatchlisted(market.symbol),
-    })),
-  );
-});
+    createEffect(() => {
+      watchlists();
+      setMarkets((prev) =>
+        prev.map((market) => ({
+          ...market,
+          watchlist: isWatchlisted(market.symbol),
+        })),
+      );
+    });
+
+    return { markets, setMarkets, marketsLoading, setMarketsLoading };
+  },
+);
 
 // Export reactive accessor
 export const MARKETS = markets;
@@ -618,29 +666,86 @@ const findMarket = (symbol: string, preferredType?: Market["type"]) => {
   );
 };
 const initialMarket = findMarket(initialSymbol, "perps");
-const [currentSymbol, setCurrentSymbolInternal] = createSignal(initialSymbol);
-const [currentMarket, setCurrentMarket] = createSignal(
-  initialMarket?.name ?? formatMarketName(initialSymbol),
-);
-const [currentMarketType, setCurrentMarketTypeInternal] = createSignal<
-  Market["type"]
->(initialMarket?.type ?? "perps");
-const [currentMarketLeverage, setCurrentMarketLeverageInternal] = createSignal(
-  initialMarket?.leverage ?? "10x",
-);
-const [markPrice, setMarkPrice] = createSignal("--");
-const [oraclePrice, setOraclePrice] = createSignal("--");
-const [change24h, setChange24h] = createSignal(0);
-const [volume24h, setVolume24h] = createSignal("--");
-const [openInterest, setOpenInterest] = createSignal("--");
-const [fundingRate, setFundingRate] = createSignal("--");
-const [searchOpen, setSearchOpen] = createSignal(false);
-const [showOrderBook, setShowOrderBookInternal] = createSignal(
-  initialSettings.showOrderBook,
-);
-const [dataProvider, setDataProviderInternal] = createSignal<DataProvider>(
-  initialSettings.dataProvider,
-);
+const {
+  currentSymbol,
+  setCurrentSymbolInternal,
+  currentMarket,
+  setCurrentMarket,
+  currentMarketType,
+  setCurrentMarketTypeInternal,
+  currentMarketLeverage,
+  setCurrentMarketLeverageInternal,
+  markPrice,
+  setMarkPrice,
+  oraclePrice,
+  setOraclePrice,
+  change24h,
+  setChange24h,
+  volume24h,
+  setVolume24h,
+  openInterest,
+  setOpenInterest,
+  fundingRate,
+  setFundingRate,
+  searchOpen,
+  setSearchOpen,
+  showOrderBook,
+  setShowOrderBookInternal,
+  dataProvider,
+  setDataProviderInternal,
+} = createRoot(() => {
+  const [currentSymbol, setCurrentSymbolInternal] = createSignal(initialSymbol);
+  const [currentMarket, setCurrentMarket] = createSignal(
+    initialMarket?.name ?? formatMarketName(initialSymbol),
+  );
+  const [currentMarketType, setCurrentMarketTypeInternal] = createSignal<
+    Market["type"]
+  >(initialMarket?.type ?? "perps");
+  const [currentMarketLeverage, setCurrentMarketLeverageInternal] =
+    createSignal(initialMarket?.leverage ?? "10x");
+  const [markPrice, setMarkPrice] = createSignal("--");
+  const [oraclePrice, setOraclePrice] = createSignal("--");
+  const [change24h, setChange24h] = createSignal(0);
+  const [volume24h, setVolume24h] = createSignal("--");
+  const [openInterest, setOpenInterest] = createSignal("--");
+  const [fundingRate, setFundingRate] = createSignal("--");
+  const [searchOpen, setSearchOpen] = createSignal(false);
+  const [showOrderBook, setShowOrderBookInternal] = createSignal(
+    initialSettings.showOrderBook,
+  );
+  const [dataProvider, setDataProviderInternal] = createSignal<DataProvider>(
+    initialSettings.dataProvider,
+  );
+
+  return {
+    currentSymbol,
+    setCurrentSymbolInternal,
+    currentMarket,
+    setCurrentMarket,
+    currentMarketType,
+    setCurrentMarketTypeInternal,
+    currentMarketLeverage,
+    setCurrentMarketLeverageInternal,
+    markPrice,
+    setMarkPrice,
+    oraclePrice,
+    setOraclePrice,
+    change24h,
+    setChange24h,
+    volume24h,
+    setVolume24h,
+    openInterest,
+    setOpenInterest,
+    fundingRate,
+    setFundingRate,
+    searchOpen,
+    setSearchOpen,
+    showOrderBook,
+    setShowOrderBookInternal,
+    dataProvider,
+    setDataProviderInternal,
+  };
+});
 
 // Wrapper to persist showOrderBook changes
 const setShowOrderBook = (value: boolean | ((prev: boolean) => boolean)) => {
@@ -703,6 +808,7 @@ export {
   getUrlSymbol,
   normalizeUrlSymbol,
   getWatchlistCoreSymbol,
+  getAllWatchlistSymbolSet,
   tickerWatchlistSymbols,
   isTickerWatchlisted,
   setTickerWatchlistSymbols,
@@ -957,10 +1063,6 @@ const updateCurrentSpotPrices = (
   setFundingRate("--");
 };
 
-/**
- * Fetch and update all markets AND the current symbol's prices from a single API call.
- * This consolidates what was previously two separate polling loops.
- */
 const formatPriceStr = (price: number): string => {
   if (price >= 1000) {
     return price.toLocaleString("en-US", {
@@ -988,6 +1090,99 @@ const formatLighterLeverage = (fraction?: number): string => {
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PERPS_LEVERAGE;
   const leverage = Math.max(1, Math.floor(10000 / parsed));
   return `${leverage}x`;
+};
+
+const LIVE_PRICE_RESOLUTION = "1";
+const LIVE_PRICE_LOOKBACK = 2;
+
+const formatLiveMarkPrice = (value: number, provider: DataProvider): string =>
+  provider === "hyperliquid" ? formatPrice(value) : formatPriceValue(value);
+
+const getLiveSymbols = (): string[] => {
+  const next = new Set<string>(BASELINE_PERPS);
+  const current = currentSymbol();
+  if (current) next.add(current);
+  trackedPerps().forEach((symbol) => {
+    if (symbol) next.add(symbol);
+  });
+  return [...next];
+};
+
+const resolveMarketType = (symbol: string): Market["type"] => {
+  const list = markets();
+  const match = list.find((market) => market.symbol === symbol);
+  if (match) return match.type;
+  if (symbol === currentSymbol()) return currentMarketType();
+  if (symbol.toLowerCase().startsWith("xyz:")) return "equities";
+  return "perps";
+};
+
+const fetchHyperliquidLivePrice = async (
+  symbol: string,
+  signal?: AbortSignal,
+): Promise<number | null> => {
+  const now = Date.now();
+  const periodMs = resolutionToMs(LIVE_PRICE_RESOLUTION);
+  const fromMs = now - periodMs * LIVE_PRICE_LOOKBACK;
+  const candles = await fetchHyperliquidCandles({
+    coin: symbol,
+    resolution: LIVE_PRICE_RESOLUTION,
+    fromMs,
+    toMs: now,
+    signal,
+  });
+  const latest = candles[candles.length - 1];
+  if (!latest || !Number.isFinite(latest.close)) return null;
+  return latest.close > 0 ? latest.close : null;
+};
+
+const fetchLighterLivePrice = async (
+  symbol: string,
+  marketType: Market["type"],
+  signal?: AbortSignal,
+): Promise<number | null> => {
+  const lighterType = marketType === "spot" ? "spot" : "perps";
+  const marketId = await getLighterMarketId(symbol, lighterType);
+  if (marketId == null) return null;
+  const detail = await fetchLighterOrderBookDetails({ marketId, signal });
+  if (!detail) return null;
+  const price = parseNumber(detail.last_trade_price ?? null);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  return price;
+};
+
+const applyLivePriceUpdates = (
+  provider: DataProvider,
+  updates: Map<string, number>,
+) => {
+  if (updates.size === 0) return;
+
+  const current = currentSymbol();
+  const currentType = currentMarketType();
+  const currentPrice = updates.get(current);
+  if (currentPrice != null) {
+    const formatted = formatLiveMarkPrice(currentPrice, provider);
+    setMarkPrice(formatted);
+    if (currentType === "spot") {
+      setOraclePrice(formatted);
+    }
+    if (shouldUpdateTitle()) {
+      document.title = `${formatted} | ${getUrlSymbol(current)} | Trade XYZ`;
+    }
+  }
+
+  setMarkets((prev) => {
+    let changed = false;
+    const next = prev.map((market) => {
+      const price = updates.get(market.symbol);
+      if (price == null) return market;
+      const formatted = formatPriceValue(price);
+      if (market.price === formatted) return market;
+      changed = true;
+      return { ...market, price: formatted };
+    });
+    return changed ? next : prev;
+  });
 };
 
 const buildHyperliquidMarkets = async (
@@ -1025,7 +1220,8 @@ const buildHyperliquidMarkets = async (
     metaAndCtxs.universe.forEach((asset, index) => {
       const normalizedAssetName = normalizeSymbol(asset.name);
       // Check both raw name and normalized name against the tracked set
-      if (!perpsSet.has(asset.name) && !perpsSet.has(normalizedAssetName)) return;
+      if (!perpsSet.has(asset.name) && !perpsSet.has(normalizedAssetName))
+        return;
       const ctx = metaAndCtxs.ctx[index];
       if (!ctx) return;
 
@@ -1079,7 +1275,8 @@ const buildHyperliquidMarkets = async (
       if (quoteToken !== "USDC") return;
       const normalizedBaseToken = normalizeSymbol(baseToken);
       // Check both raw name and normalized name against the tracked set
-      if (!spotsSet.has(baseToken) && !spotsSet.has(normalizedBaseToken)) return;
+      if (!spotsSet.has(baseToken) && !spotsSet.has(normalizedBaseToken))
+        return;
 
       const markPriceVal = parseNumber(ctx.markPx ?? ctx.midPx);
       const prevDayPrice = parseNumber(ctx.prevDayPx);
@@ -1113,7 +1310,6 @@ const buildHyperliquidMarkets = async (
       if (!ctx) return;
 
       const markPriceVal = parseNumber(ctx.markPx ?? ctx.midPx);
-      const markPrice = Number.isFinite(markPriceVal) ? markPriceVal : 0;
       const prevDayPrice = parseNumber(ctx.prevDayPx);
       const change24hVal =
         Number.isFinite(prevDayPrice) &&
@@ -1269,9 +1465,9 @@ const buildLighterMarkets = async (
   );
 };
 
-const fetchAndUpdateAll = async (
+const fetchAndUpdateMarkets = async (
   signal?: AbortSignal,
-  updateLivePrices = true,
+  updateCurrentStats = true,
 ): Promise<void> => {
   const provider = dataProvider();
   const trackedAssets = getTrackedAssets(provider);
@@ -1301,7 +1497,7 @@ const fetchAndUpdateAll = async (
 
     const selected = syncCurrentMarket(newMarkets);
 
-    if (!updateLivePrices) return;
+    if (!updateCurrentStats) return;
 
     if (provider === "hyperliquid") {
       const coin = selected?.symbol ?? currentSymbol();
@@ -1337,64 +1533,178 @@ const fetchAndUpdateAll = async (
 };
 
 /**
- * Unified live price polling hook.
- * Fetches market data once every 2 seconds and updates both:
- * - The full markets list
- * - The current symbol's live price display
- *
- * This consolidates what was previously two separate polling loops
- * (startMarketsFetch at 5s and useLivePrices at 2s) into one.
+ * Fetches lightweight live prices for current/active symbols without
+ * rebuilding the full markets list.
+ */
+const fetchAndUpdateLivePrices = async (
+  signal?: AbortSignal,
+): Promise<void> => {
+  const provider = dataProvider();
+  const symbols = getLiveSymbols();
+  if (symbols.length === 0) return;
+
+  const updates = new Map<string, number>();
+
+  if (provider === "hyperliquid") {
+    await Promise.all(
+      symbols.map(async (symbol) => {
+        try {
+          const price = await fetchHyperliquidLivePrice(symbol, signal);
+          if (price != null) updates.set(symbol, price);
+        } catch (error) {
+          if (signal?.aborted) return;
+          console.warn(`Live price failed: ${symbol}`, error);
+        }
+      }),
+    );
+  } else {
+    const typeBySymbol = new Map<string, Market["type"]>();
+    markets().forEach((market) => {
+      typeBySymbol.set(market.symbol, market.type);
+    });
+    await Promise.all(
+      symbols.map(async (symbol) => {
+        const marketType =
+          typeBySymbol.get(symbol) ?? resolveMarketType(symbol);
+        if (marketType === "equities") return;
+        try {
+          const price = await fetchLighterLivePrice(symbol, marketType, signal);
+          if (price != null) updates.set(symbol, price);
+        } catch (error) {
+          if (signal?.aborted) return;
+          console.warn(`Live price failed: ${symbol}`, error);
+        }
+      }),
+    );
+  }
+
+  if (signal?.aborted) return;
+  applyLivePriceUpdates(provider, updates);
+};
+
+const MARKETS_POLL_MS = 15000;
+const LIVE_PRICE_POLL_MS = 2000;
+const LIVE_PRICE_DEBOUNCE_MS = 300;
+
+/**
+ * Live price polling hook.
+ * - Full markets refresh runs on a slower interval.
+ * - Current/active symbol prices update more frequently.
  */
 export const useLivePrices = (options?: { enabled?: () => boolean }) => {
-  let timer: number | undefined;
-  let controller: AbortController | undefined;
-  let requestId = 0;
+  let marketsTimer: number | undefined;
+  let liveTimer: number | undefined;
+  let liveImmediateTimer: number | undefined;
+  let marketsController: AbortController | undefined;
+  let liveController: AbortController | undefined;
+  let livePollInFlight = false;
+  let livePollQueued = false;
   const isEnabled = options?.enabled ?? (() => true);
 
-  const doFetch = async () => {
-    const currentRequestId = ++requestId;
-    controller?.abort();
+  const pollMarkets = async () => {
+    marketsController?.abort();
     const nextController = new AbortController();
-    controller = nextController;
-
+    marketsController = nextController;
     try {
-      await fetchAndUpdateAll(nextController.signal, true);
+      await fetchAndUpdateMarkets(nextController.signal, true);
     } catch (e) {
       if (nextController.signal.aborted) return;
-      console.error("Error updating prices:", e);
+      console.error("Error updating markets:", e);
     }
+  };
+
+  const pollLivePrices = async () => {
+    if (livePollInFlight) {
+      livePollQueued = true;
+      return;
+    }
+    livePollInFlight = true;
+    livePollQueued = false;
+    const nextController = new AbortController();
+    liveController = nextController;
+    try {
+      await fetchAndUpdateLivePrices(nextController.signal);
+    } catch (e) {
+      if (nextController.signal.aborted) return;
+      console.error("Error updating live prices:", e);
+    } finally {
+      livePollInFlight = false;
+      if (livePollQueued && !nextController.signal.aborted) {
+        livePollQueued = false;
+        void pollLivePrices();
+      }
+    }
+  };
+
+  const scheduleLivePrices = (delayMs = 0) => {
+    if (!isEnabled()) return;
+    if (liveImmediateTimer) {
+      clearTimeout(liveImmediateTimer);
+      liveImmediateTimer = undefined;
+    }
+    liveImmediateTimer = setTimeout(() => {
+      liveImmediateTimer = undefined;
+      if (!isEnabled()) return;
+      void pollLivePrices();
+    }, delayMs) as unknown as number;
   };
 
   // React to symbol changes and enabled state
   createEffect(() => {
     const enabled = isEnabled();
-    // Track currentSymbol to trigger re-fetch on symbol change
+    // Track currentSymbol to trigger immediate refresh on symbol change
     currentSymbol();
     dataProvider();
     trackedAssetsKey();
 
     // Clear previous timer
-    if (timer) {
-      clearInterval(timer);
-      timer = undefined;
+    if (marketsTimer) {
+      clearInterval(marketsTimer);
+      marketsTimer = undefined;
     }
-    controller?.abort();
+    if (liveTimer) {
+      clearInterval(liveTimer);
+      liveTimer = undefined;
+    }
+    if (liveImmediateTimer) {
+      clearTimeout(liveImmediateTimer);
+      liveImmediateTimer = undefined;
+    }
+    marketsController?.abort();
+    liveController?.abort();
+    livePollInFlight = false;
+    livePollQueued = false;
 
     if (!enabled) return;
 
     // Immediate update
-    doFetch();
+    untrack(() => {
+      void pollMarkets();
+      scheduleLivePrices(LIVE_PRICE_DEBOUNCE_MS);
+    });
 
-    // Start polling - unified 2 second interval for both markets + live prices
-    timer = setInterval(doFetch, 2000) as unknown as number;
+    // Start polling with split intervals
+    marketsTimer = setInterval(
+      pollMarkets,
+      MARKETS_POLL_MS,
+    ) as unknown as number;
+    liveTimer = setInterval(
+      pollLivePrices,
+      LIVE_PRICE_POLL_MS,
+    ) as unknown as number;
   });
 
   onCleanup(() => {
-    if (timer) clearInterval(timer);
-    controller?.abort();
+    if (marketsTimer) clearInterval(marketsTimer);
+    if (liveTimer) clearInterval(liveTimer);
+    if (liveImmediateTimer) clearTimeout(liveImmediateTimer);
+    marketsController?.abort();
+    liveController?.abort();
+    livePollInFlight = false;
+    livePollQueued = false;
   });
 };
 
 // Initial fetch on module load (non-polling, just to populate markets initially)
 // The useLivePrices hook will take over polling when the app mounts
-fetchAndUpdateAll(undefined, false);
+fetchAndUpdateMarkets(undefined, false);
