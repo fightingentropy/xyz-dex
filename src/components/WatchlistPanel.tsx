@@ -98,8 +98,17 @@ const changeClass = (changePercent: number) => {
 };
 
 const WatchlistPanel: Component = () => {
+  const [sortDirection, setSortDirection] = createSignal<"asc" | "desc">("desc");
   const watchlistMarkets = createMemo(() =>
-    MARKETS().filter((market) => market.watchlist && market.type !== "spot"),
+    MARKETS()
+      .filter((market) => market.watchlist && market.type !== "spot")
+      .slice()
+      .sort((a, b) => {
+        const aChange = Number.isFinite(a.change24h) ? a.change24h : -Infinity;
+        const bChange = Number.isFinite(b.change24h) ? b.change24h : -Infinity;
+        const direction = sortDirection() === "desc" ? -1 : 1;
+        return direction * (aChange - bChange);
+      }),
   );
 
   const [columnWidths, setColumnWidths] = createSignal<ColumnWidths>(loadColumnWidths());
@@ -432,12 +441,20 @@ const WatchlistPanel: Component = () => {
           >
             <div class="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5 bg-transparent group-hover:bg-brand-accent/50 transition-colors" />
           </div>
-          <div
-            class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-brand-slate-500 text-right font-mono tabular-nums flex-shrink-0"
+          <button
+            type="button"
+            onClick={() =>
+              setSortDirection((prev) => (prev === "desc" ? "asc" : "desc"))
+            }
+            class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-brand-slate-500 text-right font-mono tabular-nums flex-shrink-0 hover:text-slate-200 transition-colors"
             style={{ width: `${widths().chgPercent}px` }}
+            title="Toggle sort by change percent"
           >
             Chg%
-          </div>
+            <span class="ml-1 text-[9px]">
+              {sortDirection() === "desc" ? "v" : "^"}
+            </span>
+          </button>
           <div class="flex-1" />
         </div>
 
