@@ -14,6 +14,7 @@ import { isAuthenticated } from "./auth";
 import { currentSymbol, markPrice, MARKETS } from "./market";
 import type { L2Book as OrderBook } from "../lib/format";
 import { isVaultTradingAccount, tradingVaultId } from "./tradingAccount";
+import { getSpotBalance, isSpotAsset } from "./wallet";
 
 export type Collateral = "USDC" | "USDT";
 export type OrderSide = "buy" | "sell";
@@ -123,6 +124,58 @@ const parseNumber = (value: string | number): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const normalizeAssetSymbol = (symbol: string) => {
+  const trimmed = String(symbol ?? "").trim();
+  if (!trimmed) return "";
+  if (trimmed.toLowerCase().startsWith("xyz:")) {
+    return trimmed.slice(trimmed.indexOf(":") + 1).toUpperCase();
+  }
+  return trimmed.toUpperCase();
+};
+
+const getSpotBalanceForSymbol = (symbol: string) => {
+  const normalized = normalizeAssetSymbol(symbol);
+  return isSpotAsset(normalized) ? getSpotBalance(normalized) : 0;
+};
+
+const getSpotPriceForAsset = (asset: string, markets = MARKETS()) => {
+  const normalized = normalizeAssetSymbol(asset);
+  if (normalized === "USDC" || normalized === "USDT") return 1;
+  const spotMarket = markets.find(
+    (market) =>
+      market.type === "spot" &&
+      normalizeAssetSymbol(market.symbol) === normalized,
+  );
+  const spotPrice = parseNumber(spotMarket?.price ?? 0);
+  if (spotPrice > 0) return spotPrice;
+
+  const perpMarket = markets.find(
+    (market) =>
+      market.type === "perps" &&
+      normalizeAssetSymbol(market.symbol) === normalized,
+  );
+  const perpPrice = parseNumber(perpMarket?.price ?? 0);
+  return perpPrice > 0 ? perpPrice : 0;
+};
+
+const isCrossMarginPosition = (position: Position) =>
+  (position.marginType ?? "cross") === "cross";
+
+const getHedgedSpotSize = (position: Position) => {
+  if (!isPortfolioMarginEnabled()) return 0;
+  if (!isCrossMarginPosition(position)) return 0;
+  if (position.size >= 0) return 0;
+  const spotBalance = getSpotBalanceForSymbol(position.symbol);
+  const absSize = Math.abs(position.size);
+  return Math.min(absSize, spotBalance);
+};
+
+export const getEffectivePositionSize = (position: Position) => {
+  const absSize = Math.abs(position.size);
+  const hedged = getHedgedSpotSize(position);
+  return Math.max(0, absSize - hedged);
+};
+
 const getErrorText = (error: unknown): string => {
   if (!error) return "";
   if (typeof error === "string") return error;
@@ -212,6 +265,8 @@ const shouldTriggerAdl = (
   const isShort = position.size < 0;
   const absSize = Math.abs(position.size);
   if (absSize <= 0) return false;
+  const effectiveAbsSize = getEffectivePositionSize(position);
+  if (effectiveAbsSize <= 0) return false;
 
   const marginType = position.marginType ?? "cross";
   if (marginType === "isolated") {
@@ -225,7 +280,7 @@ const shouldTriggerAdl = (
 
   const currentUnrealized = (mark - position.entryPrice) * position.size;
   const positionMarginUsed =
-    position.leverage > 0 ? (absSize * mark) / position.leverage : 0;
+    position.leverage > 0 ? (effectiveAbsSize * mark) / position.leverage : 0;
   let equity = 0;
 
   if (totals.portfolioMarginEnabled) {
@@ -252,8 +307,8 @@ const shouldTriggerAdl = (
   if (equity <= 0) return true;
 
   const liqPrice = isShort
-    ? position.entryPrice + equity / absSize
-    : position.entryPrice - equity / absSize;
+    ? position.entryPrice + equity / effectiveAbsSize
+    : position.entryPrice - equity / effectiveAbsSize;
   if (!Number.isFinite(liqPrice) || liqPrice <= 0) return false;
   return isShort ? mark >= liqPrice : mark <= liqPrice;
 };
@@ -338,9 +393,9 @@ createRoot(() => {
       unrealizedByCollateral[position.collateral] += pnl;
       totalUnrealized += pnl;
       if (position.leverage <= 0) continue;
-      const absSize = Math.abs(position.size);
-      if (absSize <= 0) continue;
-      const marginUsed = (absSize * mark) / position.leverage;
+      const effectiveSize = getEffectivePositionSize(position);
+      if (effectiveSize <= 0) continue;
+      const marginUsed = (effectiveSize * mark) / position.leverage;
       marginUsedByCollateral[position.collateral] += marginUsed;
       totalMarginUsed += marginUsed;
     }
@@ -604,8 +659,11 @@ export function getWeightedSpotEquity() {
   if (isVaultTradingAccount()) return 0;
   if (!isPortfolioMarginEnabled()) return 0;
   const breakdown = portfolioMarginStatus()?.collateral?.spot ?? [];
+  const markets = MARKETS();
   return breakdown.reduce((sum, item) => {
-    const price = Number.isFinite(item.price) ? item.price : 0;
+    const livePrice = getSpotPriceForAsset(item.asset, markets);
+    const price =
+      livePrice > 0 ? livePrice : Number.isFinite(item.price) ? item.price : 0;
     const weight = Number.isFinite(item.weight) ? item.weight : 0;
     return sum + item.balance * price * weight;
   }, 0);
@@ -629,7 +687,9 @@ export function getTotalMarginUsed() {
     if (!Number.isFinite(mark) || mark <= 0 || position.leverage <= 0) {
       return sum;
     }
-    return sum + (Math.abs(position.size) * mark) / position.leverage;
+    const effectiveSize = getEffectivePositionSize(position);
+    if (effectiveSize <= 0) return sum;
+    return sum + (effectiveSize * mark) / position.leverage;
   }, 0);
 }
 
@@ -700,6 +760,19 @@ export const placeOrder = async ({
       markPrices[position.symbol] = positionMark;
     }
   }
+  const spotPrices: Record<string, number> = {};
+  if (isPortfolioMarginEnabled()) {
+    const breakdown = portfolioMarginStatus()?.collateral?.spot ?? [];
+    const markets = MARKETS();
+    for (const item of breakdown) {
+      const price = getSpotPriceForAsset(item.asset, markets);
+      if (price > 0) {
+        spotPrices[normalizeAssetSymbol(item.asset)] = price;
+      }
+    }
+  }
+  const includeSpotPrices =
+    isPortfolioMarginEnabled() && Object.keys(spotPrices).length > 0;
 
   const baseArgs = {
     symbol,
@@ -711,6 +784,7 @@ export const placeOrder = async ({
     collateral,
     marginType,
     markPrice: mark,
+    ...(includeSpotPrices ? { spotPrices } : {}),
     ...getOwnerArgs(),
   };
 

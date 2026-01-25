@@ -191,6 +191,34 @@ const OrderForm: Component = () => {
     return (Math.abs(size) * price) / leverageValue;
   };
 
+  const normalizeAssetSymbol = (symbol: string) => {
+    const trimmed = String(symbol ?? "").trim();
+    if (!trimmed) return "";
+    if (trimmed.toLowerCase().startsWith("xyz:")) {
+      return trimmed.slice(trimmed.indexOf(":") + 1).toUpperCase();
+    }
+    return trimmed.toUpperCase();
+  };
+
+  const getSpotBalanceForSymbol = (symbol: string) => {
+    const normalized = normalizeAssetSymbol(symbol);
+    return isSpotAsset(normalized) ? getSpotBalance(normalized) : 0;
+  };
+
+  const getEffectiveAbsSize = (
+    size: number,
+    symbol: string,
+    positionMarginType?: "isolated" | "cross",
+  ) => {
+    const absSize = Math.abs(size);
+    if (!isPortfolioMarginEnabled()) return absSize;
+    if ((positionMarginType ?? "cross") === "isolated") return absSize;
+    if (size >= 0) return absSize;
+    const spotBalance = getSpotBalanceForSymbol(symbol);
+    if (!Number.isFinite(spotBalance) || spotBalance <= 0) return absSize;
+    return Math.max(0, absSize - Math.min(absSize, spotBalance));
+  };
+
   const signedOrderSize = createMemo(() => {
     const size = orderSize();
     if (!Number.isFinite(size) || size <= 0) return 0;
@@ -206,7 +234,12 @@ const OrderForm: Component = () => {
     return relevantPositions.reduce((sum, pos) => {
       if (pos.leverage <= 0) return sum;
       const price = getMarkPriceForSymbol(pos.symbol);
-      return sum + calculateMarginUsed(pos.size, pos.leverage, price);
+      const effectiveSize = getEffectiveAbsSize(
+        pos.size,
+        pos.symbol,
+        pos.marginType ?? "cross",
+      );
+      return sum + calculateMarginUsed(effectiveSize, pos.leverage, price);
     }, 0);
   });
 
@@ -225,11 +258,13 @@ const OrderForm: Component = () => {
     for (const position of relevantPositions) {
       let nextSize = position.size;
       let leverageValue = position.leverage;
+      let nextMarginType = position.marginType ?? "cross";
 
       if (position.symbol === currentSymbol()) {
         applied = true;
         nextSize = position.size + signedSize;
         leverageValue = nextLeverage;
+        nextMarginType = marginType();
       }
 
       if (nextSize === 0 || leverageValue <= 0) continue;
@@ -237,12 +272,22 @@ const OrderForm: Component = () => {
         position.symbol === currentSymbol()
           ? markPrice
           : getMarkPriceForSymbol(position.symbol);
-      marginUsed += calculateMarginUsed(nextSize, leverageValue, price);
+      const effectiveSize = getEffectiveAbsSize(
+        nextSize,
+        position.symbol,
+        nextMarginType,
+      );
+      marginUsed += calculateMarginUsed(effectiveSize, leverageValue, price);
     }
 
     if (!applied && signedSize !== 0) {
       if (nextLeverage > 0 && Number.isFinite(markPrice) && markPrice > 0) {
-        marginUsed += (Math.abs(signedSize) * markPrice) / nextLeverage;
+        const effectiveSize = getEffectiveAbsSize(
+          signedSize,
+          currentSymbol(),
+          marginType(),
+        );
+        marginUsed += (effectiveSize * markPrice) / nextLeverage;
       }
     }
 
@@ -279,8 +324,13 @@ const OrderForm: Component = () => {
       if (position.symbol === current) continue;
       const price = getMarkPriceForSymbol(position.symbol);
       if (!Number.isFinite(price) || price <= 0) continue;
-      totals[position.collateral] += calculateMarginUsed(
+      const effectiveSize = getEffectiveAbsSize(
         position.size,
+        position.symbol,
+        position.marginType ?? "cross",
+      );
+      totals[position.collateral] += calculateMarginUsed(
+        effectiveSize,
         position.leverage,
         price,
       );
@@ -292,7 +342,12 @@ const OrderForm: Component = () => {
     return positions().reduce((sum, position) => {
       if (position.symbol === current) return sum;
       const price = getMarkPriceForSymbol(position.symbol);
-      return sum + calculateMarginUsed(position.size, position.leverage, price);
+      const effectiveSize = getEffectiveAbsSize(
+        position.size,
+        position.symbol,
+        position.marginType ?? "cross",
+      );
+      return sum + calculateMarginUsed(effectiveSize, position.leverage, price);
     }, 0);
   });
 
@@ -426,7 +481,11 @@ const OrderForm: Component = () => {
     }
 
     const equity = baseEquity();
-    const denom = Math.abs(position.size);
+    const denom = getEffectiveAbsSize(
+      position.size,
+      currentSymbol(),
+      position.marginType ?? "cross",
+    );
     if (!Number.isFinite(equity) || denom <= 0) return "--";
     const liq = isShort
       ? entryPrice + equity / denom

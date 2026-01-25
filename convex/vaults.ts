@@ -29,7 +29,8 @@ const getVaultPerpsBalance = async (
   ctx.db
     .query("perpsBalances")
     .withIndex("by_owner_asset", (q) =>
-      q.eq("ownerType", OWNER_TYPE_VAULT)
+      q
+        .eq("ownerType", OWNER_TYPE_VAULT)
         .eq("ownerId", vaultId)
         .eq("asset", asset),
     )
@@ -42,7 +43,9 @@ const getUserPerpsBalance = async (
 ) =>
   ctx.db
     .query("perpsBalances")
-    .withIndex("by_user_asset", (q) => q.eq("userId", userId).eq("asset", asset))
+    .withIndex("by_user_asset", (q) =>
+      q.eq("userId", userId).eq("asset", asset),
+    )
     .unique();
 
 const calculateVaultEquity = async (
@@ -217,9 +220,7 @@ export const getVaultDetail = query({
       .withIndex("by_vault", (q) => q.eq("vaultId", vault._id))
       .unique();
 
-    const member = user
-      ? await getVaultMember(ctx, vault._id, user._id)
-      : null;
+    const member = user ? await getVaultMember(ctx, vault._id, user._id) : null;
 
     let equityFallback: number | null = null;
     let pnlFallback: number | null = null;
@@ -239,10 +240,7 @@ export const getVaultDetail = query({
 
     const sharePrice = summary.sharePrice;
     const memberValue = summary.memberShares * sharePrice;
-    const memberProfit = Math.max(
-      0,
-      memberValue - summary.memberCostBasisUSDC,
-    );
+    const memberProfit = Math.max(0, memberValue - summary.memberCostBasisUSDC);
 
     return {
       ...summary,

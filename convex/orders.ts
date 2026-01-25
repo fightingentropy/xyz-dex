@@ -7,6 +7,7 @@ import {
   calculateWeightedSpotEquity,
   getDemoPrice,
   isPortfolioMarginEnabled,
+  type PositionExposure,
   updatePortfolioMetrics,
 } from "./lib/portfolio";
 
@@ -129,16 +130,54 @@ const resolveMarkPrice = (
   return 0;
 };
 
+const normalizeAssetSymbol = (symbol: string) => {
+  const trimmed = String(symbol ?? "").trim();
+  if (!trimmed) return "";
+  if (trimmed.toLowerCase().startsWith("xyz:")) {
+    return trimmed.slice(trimmed.indexOf(":") + 1).toUpperCase();
+  }
+  return trimmed.toUpperCase();
+};
+
+const isCrossMargin = (marginType?: MarginType) =>
+  (marginType ?? "cross") === "cross";
+
+const applySpotNetting = (
+  size: number,
+  symbol: string,
+  marginType: MarginType | undefined,
+  spotRemaining: Record<string, number> | null,
+) => {
+  const absSize = Math.abs(size);
+  if (!spotRemaining) return absSize;
+  if (size >= 0 || !isCrossMargin(marginType)) return absSize;
+  const asset = normalizeAssetSymbol(symbol);
+  const remaining = spotRemaining[asset] ?? 0;
+  if (remaining <= 0) return absSize;
+  const hedged = Math.min(remaining, absSize);
+  spotRemaining[asset] = remaining - hedged;
+  return absSize - hedged;
+};
+
 const calculateMarginUsed = (
   positions: Doc<"positions">[],
   markOverrides: Record<string, number>,
+  spotBalances?: Record<string, number>,
 ) => {
   let marginUsed = 0;
+  const spotRemaining = spotBalances ? { ...spotBalances } : null;
   for (const position of positions) {
     if (position.leverage <= 0) continue;
     const mark = resolveMarkPrice(position.symbol, markOverrides);
     if (!isValidPrice(mark)) continue;
-    marginUsed += (Math.abs(position.size) * mark) / position.leverage;
+    const size = applySpotNetting(
+      position.size,
+      position.symbol,
+      position.marginType ?? "cross",
+      spotRemaining,
+    );
+    if (size <= 0) continue;
+    marginUsed += (size * mark) / position.leverage;
   }
   return marginUsed;
 };
@@ -150,36 +189,57 @@ const calculateNextMarginUsed = (
     signedSize,
     leverage,
     markPrice,
+    marginType,
   }: {
     symbol: string;
     signedSize: number;
     leverage: number;
     markPrice: number;
+    marginType?: MarginType;
   },
   markOverrides: Record<string, number>,
+  spotBalances?: Record<string, number>,
 ) => {
   let marginUsed = 0;
   let applied = false;
+  const spotRemaining = spotBalances ? { ...spotBalances } : null;
 
   for (const position of positions) {
     let nextSize = position.size;
     let nextLeverage = position.leverage;
+    let nextMarginType = position.marginType ?? "cross";
 
     if (position.symbol === symbol) {
       applied = true;
       nextSize = position.size + signedSize;
       nextLeverage = leverage;
+      nextMarginType = marginType ?? nextMarginType;
     }
 
     if (nextSize === 0 || nextLeverage <= 0) continue;
     const mark = resolveMarkPrice(position.symbol, markOverrides);
     if (!isValidPrice(mark)) continue;
-    marginUsed += (Math.abs(nextSize) * mark) / nextLeverage;
+    const size = applySpotNetting(
+      nextSize,
+      position.symbol,
+      nextMarginType,
+      spotRemaining,
+    );
+    if (size <= 0) continue;
+    marginUsed += (size * mark) / nextLeverage;
   }
 
   if (!applied && signedSize !== 0) {
     if (leverage > 0 && isValidPrice(markPrice)) {
-      marginUsed += (Math.abs(signedSize) * markPrice) / leverage;
+      const size = applySpotNetting(
+        signedSize,
+        symbol,
+        marginType,
+        spotRemaining,
+      );
+      if (size > 0) {
+        marginUsed += (size * markPrice) / leverage;
+      }
     }
   }
 
@@ -654,6 +714,7 @@ export const placePerpsOrder = mutation({
     collateral: collateralValidator,
     markPrice: v.number(),
     markPrices: v.optional(v.record(v.string(), v.number())),
+    spotPrices: v.optional(v.record(v.string(), v.number())),
     marginType: v.optional(marginTypeValidator),
     vaultId: v.optional(v.id("vaults")),
   },
@@ -697,7 +758,25 @@ export const placePerpsOrder = mutation({
     };
 
     if (portfolioMarginEnabled) {
-      const currentMarginUsed = calculateMarginUsed(positions, markOverrides);
+      const spotBalances = await ctx.db
+        .query("spotBalances")
+        .withIndex("by_owner", (q) =>
+          q.eq("ownerType", owner.ownerType).eq("ownerId", owner.ownerId),
+        )
+        .collect();
+      const spotBalanceMap = spotBalances.reduce<Record<string, number>>(
+        (acc, balance) => {
+          acc[normalizeAssetSymbol(balance.asset)] = balance.balance;
+          return acc;
+        },
+        {},
+      );
+
+      const currentMarginUsed = calculateMarginUsed(
+        positions,
+        markOverrides,
+        spotBalanceMap,
+      );
       const nextMarginUsed = calculateNextMarginUsed(
         positions,
         {
@@ -705,8 +784,10 @@ export const placePerpsOrder = mutation({
           signedSize,
           leverage: args.leverage,
           markPrice: args.markPrice,
+          marginType,
         },
         markOverrides,
+        spotBalanceMap,
       );
       const perpsBalances = await ctx.db
         .query("perpsBalances")
@@ -718,9 +799,35 @@ export const placePerpsOrder = mutation({
         (sum, balance) => sum + balance.balance,
         0,
       );
+      const exposurePositions: PositionExposure[] = positions.map(
+        (position) => ({
+          symbol: position.symbol,
+          size: position.size,
+          marginType: position.marginType ?? "cross",
+        }),
+      );
+      const existingExposure = exposurePositions.find(
+        (position) => position.symbol === args.symbol,
+      );
+      if (existingExposure) {
+        existingExposure.size += signedSize;
+        existingExposure.marginType = marginType;
+        if (existingExposure.size === 0) {
+          const idx = exposurePositions.indexOf(existingExposure);
+          if (idx >= 0) exposurePositions.splice(idx, 1);
+        }
+      } else if (signedSize !== 0) {
+        exposurePositions.push({
+          symbol: args.symbol,
+          size: signedSize,
+          marginType,
+        });
+      }
       const weightedSpotEquity = await calculateWeightedSpotEquity(
         ctx,
         user._id,
+        exposurePositions,
+        args.spotPrices,
       );
       const totalUnrealized = calculateTotalUnrealizedPnl(
         positions,
@@ -750,6 +857,7 @@ export const placePerpsOrder = mutation({
           signedSize,
           leverage: args.leverage,
           markPrice: args.markPrice,
+          marginType,
         },
         markOverrides,
       );

@@ -9,6 +9,7 @@ import {
   getTotalUnrealizedPnl,
   getWeightedSpotEquity,
   getBalance,
+  getEffectivePositionSize,
   getMarkPriceForSymbol,
   isPortfolioMarginEnabled,
   positions,
@@ -197,11 +198,13 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
 
                 const isShort = position.size < 0;
                 const absSize = () => Math.abs(position.size);
+                const effectiveAbsSize = () =>
+                  getEffectivePositionSize(position);
 
                 // Margin calculation: notional / leverage
                 const margin = () => {
                   if (position.leverage <= 0) return 0;
-                  return (absSize() * mark()) / position.leverage;
+                  return (effectiveAbsSize() * mark()) / position.leverage;
                 };
 
                 const pnl = () =>
@@ -250,13 +253,14 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                   if (marginType === "cross") {
                     // Cross margin: use account equity for the position
                     const equity = baseEquity() - marginUsedExcludingCurrent();
-                    if (!Number.isFinite(equity) || absSize() === 0) return NaN;
+                    const denom = effectiveAbsSize();
+                    if (!Number.isFinite(equity) || denom === 0) return NaN;
                     // For shorts, liq price is entry + equity/size (price going up)
                     // For longs, liq price is entry - equity/size (price going down)
                     if (isShort) {
-                      return position.entryPrice + equity / absSize();
+                      return position.entryPrice + equity / denom;
                     }
-                    return position.entryPrice - equity / absSize();
+                    return position.entryPrice - equity / denom;
                   } else {
                     // Isolated margin: use leverage factor for the position
                     const liqFactor =

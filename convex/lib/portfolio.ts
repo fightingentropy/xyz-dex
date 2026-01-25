@@ -50,18 +50,91 @@ export const DEMO_PRICES: Record<string, number> = {
 
 export const getDemoPrice = (asset: string) => DEMO_PRICES[asset] ?? 0;
 
+export type PositionExposure = {
+  symbol: string;
+  size: number;
+  marginType?: "isolated" | "cross";
+};
+
+const normalizeAssetSymbol = (symbol: string) => {
+  const trimmed = String(symbol ?? "").trim();
+  if (!trimmed) return "";
+  if (trimmed.toLowerCase().startsWith("xyz:")) {
+    return trimmed.slice(trimmed.indexOf(":") + 1).toUpperCase();
+  }
+  return trimmed.toUpperCase();
+};
+
+const buildShortExposureByAsset = (positions: PositionExposure[]) => {
+  const shorts: Record<string, number> = {};
+  for (const position of positions) {
+    if (!position || position.size >= 0) continue;
+    const marginType = position.marginType ?? "cross";
+    if (marginType === "isolated") continue;
+    const asset = normalizeAssetSymbol(position.symbol);
+    if (!asset) continue;
+    shorts[asset] = (shorts[asset] ?? 0) + Math.abs(position.size);
+  }
+  return shorts;
+};
+
+const resolveSpotPrice = (
+  asset: string,
+  spotPrices?: Record<string, number>,
+) => {
+  const normalized = normalizeAssetSymbol(asset);
+  const live = spotPrices?.[normalized];
+  if (Number.isFinite(live) && live > 0) return live;
+  return getDemoPrice(normalized);
+};
+
 export const getWeightedSpotEquityBreakdown = async (
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
+  options: {
+    positions?: PositionExposure[];
+    spotPrices?: Record<string, number>;
+  } = {},
 ) => {
   const balances = await ctx.db
     .query("spotBalances")
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .collect();
+  const positions =
+    options.positions ??
+    (
+      await ctx.db
+        .query("positions")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .collect()
+    ).map((position) => ({
+      symbol: position.symbol,
+      size: position.size,
+      marginType: position.marginType ?? "cross",
+    }));
+  const shortByAsset = buildShortExposureByAsset(positions);
+  const spotPrices = options.spotPrices;
+
   return balances.map((balance) => {
-    const price = getDemoPrice(balance.asset);
-    const weight = getCollateralWeight(balance.asset);
-    const weightedValue = balance.balance * price * weight;
+    const normalized = normalizeAssetSymbol(balance.asset);
+    const price = resolveSpotPrice(normalized, spotPrices);
+    const baseWeight = getCollateralWeight(normalized);
+    let weightedValue = balance.balance * price * baseWeight;
+    let weight = baseWeight;
+
+    if (normalized === "HYPE") {
+      const hedgedSize = Math.min(
+        balance.balance,
+        shortByAsset[normalized] ?? 0,
+      );
+      if (hedgedSize > 0 && price > 0) {
+        const unhedgedSize = Math.max(0, balance.balance - hedgedSize);
+        weightedValue = hedgedSize * price + unhedgedSize * price * baseWeight;
+        const denom = balance.balance * price;
+        weight = denom > 0 ? weightedValue / denom : baseWeight;
+      }
+    }
+
     return {
       asset: balance.asset,
       balance: balance.balance,
@@ -75,8 +148,13 @@ export const getWeightedSpotEquityBreakdown = async (
 export const calculateWeightedSpotEquity = async (
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
+  positions?: PositionExposure[],
+  spotPrices?: Record<string, number>,
 ) => {
-  const breakdown = await getWeightedSpotEquityBreakdown(ctx, userId);
+  const breakdown = await getWeightedSpotEquityBreakdown(ctx, userId, {
+    positions,
+    spotPrices,
+  });
   return breakdown.reduce((sum, item) => sum + item.weightedValue, 0);
 };
 
@@ -94,13 +172,15 @@ export const calculatePerpsEquity = async (
 export const calculateSpotEquity = async (
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
+  spotPrices?: Record<string, number>,
 ) => {
   const balances = await ctx.db
     .query("spotBalances")
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .collect();
   return balances.reduce(
-    (sum, balance) => sum + balance.balance * getDemoPrice(balance.asset),
+    (sum, balance) =>
+      sum + balance.balance * resolveSpotPrice(balance.asset, spotPrices),
     0,
   );
 };

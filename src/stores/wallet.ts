@@ -101,6 +101,7 @@ export {
 };
 
 export const getSpotBalance = (asset: SpotAsset) => spotBalances()[asset] ?? 0;
+export const getSpotBalances = () => spotBalances();
 
 export const isSpotAsset = (asset: string): asset is SpotAsset =>
   SPOT_ASSETS.includes(asset as SpotAsset);
