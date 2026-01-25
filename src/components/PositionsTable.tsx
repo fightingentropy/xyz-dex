@@ -197,7 +197,6 @@ const PositionsTable: Component<{ compact?: boolean }> = (props) => {
                 const positionValue = () => Math.abs(position.size) * mark();
 
                 const isShort = position.size < 0;
-                const absSize = () => Math.abs(position.size);
                 const effectiveAbsSize = () =>
                   getEffectivePositionSize(position);
 

@@ -1,6 +1,6 @@
 import { Component, Show } from "solid-js";
-import type { FunctionReference } from "convex/server";
 import { createConvexQuery } from "../lib/convex";
+import { api } from "../../convex/_generated/api";
 import {
   authReady,
   authUser,
@@ -10,24 +10,7 @@ import {
   login,
 } from "../stores/auth";
 
-type AdminDashboardStats = {
-  totalUsers: number;
-  activeUsers24h: number;
-  totalVolume: number;
-  totalEquity: number;
-  totalPnl: number;
-  totalTrades: number;
-  totalFees: number;
-  openOrders: number;
-  openPositions: number;
-  updatedAt: number;
-};
-
-const statsRef = "admin:getDashboardStats" as unknown as FunctionReference<
-  "query",
-  {},
-  AdminDashboardStats
->;
+const statsRef = api.admin.getDashboardStats;
 
 const formatCount = (value?: number) => {
   if (!Number.isFinite(value ?? NaN)) return "--";

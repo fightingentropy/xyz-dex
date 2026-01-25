@@ -201,10 +201,6 @@ const BalancesPanel: Component<{
                     return 0;
                   return latestBalance * latestPrice;
                 });
-                const pnl = createMemo(() => {
-                  // Spot holdings don't track entry prices, so no PnL to display
-                  return null;
-                });
                 const decimals = asset.symbol === "BTC" ? 6 : 4;
 
                 return (

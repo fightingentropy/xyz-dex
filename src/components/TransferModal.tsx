@@ -5,7 +5,7 @@ import {
   createSignal,
   onCleanup,
 } from "solid-js";
-import { getBalance, getAvailableBalance } from "../stores/clob";
+import { getAvailableBalance } from "../stores/clob";
 import {
   closeTransferModal,
   getSpotBalance,

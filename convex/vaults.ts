@@ -89,7 +89,7 @@ const calculateVaultCostBasis = async (
 };
 
 const upsertVaultMetrics = async (
-  ctx: MutationCtx | QueryCtx,
+  ctx: MutationCtx,
   vaultId: Id<"vaults">,
 ) => {
   const equityUSDC = await calculateVaultEquity(ctx, vaultId);

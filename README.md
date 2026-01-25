@@ -40,7 +40,6 @@ between Classic and Portfolio. Full definitions and formulas live in
 - `src/components`: UI components (chart, order book, forms)
 - `src/stores`: SolidJS signal stores for market data, routing, and cache
 - `src/lib/hyperliquid.ts`: Hyperliquid API helpers and formatting utilities
-- `src/lib/lighter.ts`: Lighter API helpers
 
 ## Development
 Install dependencies:

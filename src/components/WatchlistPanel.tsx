@@ -1,5 +1,4 @@
 import { Component, For, Show, createMemo, createSignal, onMount, onCleanup } from "solid-js";
-import { formatPercent } from "../lib/hyperliquid";
 import {
   MARKETS,
   activeWatchlistId,

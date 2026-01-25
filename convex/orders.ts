@@ -53,12 +53,12 @@ const resolveOwnerForQuery = async (
   vaultId?: Id<"vaults">,
 ) => {
   if (!vaultId) {
-    return { ownerType: OWNER_TYPE_USER as const, ownerId: userId };
+    return { ownerType: OWNER_TYPE_USER, ownerId: userId };
   }
   const vault = await ctx.db.get(vaultId);
   if (!vault || vault.operatorUserId !== userId) return null;
   if (vault.status !== "active") return null;
-  return { ownerType: OWNER_TYPE_VAULT as const, ownerId: vaultId };
+  return { ownerType: OWNER_TYPE_VAULT, ownerId: vaultId };
 };
 
 const getPosition = async (

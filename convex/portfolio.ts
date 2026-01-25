@@ -9,6 +9,7 @@ import {
 } from "./lib/portfolio";
 
 const OWNER_TYPE_VAULT = "vault" as const;
+const OWNER_TYPE_USER = "user" as const;
 
 const calculateOwnerPerpsEquity = async (
   ctx: QueryCtx,

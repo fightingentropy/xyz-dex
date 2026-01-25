@@ -1,6 +1,6 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
-import type { FunctionReference } from "convex/server";
 import type { Id } from "../../convex/_generated/dataModel";
+import { api } from "../../convex/_generated/api";
 import { convex, createConvexQuery } from "../lib/convex";
 import { isAuthenticated } from "./auth";
 
@@ -27,40 +27,11 @@ export type VaultDetail = VaultSummary & {
   metricsUpdatedAt: number | null;
 };
 
-const listVaultsRef =
-  "vaults:listVaults" as unknown as FunctionReference<
-    "query",
-    {},
-    VaultSummary[]
-  >;
-
-const vaultDetailRef =
-  "vaults:getVaultDetail" as unknown as FunctionReference<
-    "query",
-    { vaultId: Id<"vaults"> },
-    VaultDetail | null
-  >;
-
-const createVaultRef =
-  "vaults:createVault" as unknown as FunctionReference<
-    "mutation",
-    { name: string },
-    { vaultId: Id<"vaults"> }
-  >;
-
-const depositRef =
-  "vaults:depositUSDC" as unknown as FunctionReference<
-    "mutation",
-    { vaultId: Id<"vaults">; amount: number },
-    { sharesMinted: number; sharePrice: number }
-  >;
-
-const withdrawRef =
-  "vaults:withdrawUSDC" as unknown as FunctionReference<
-    "mutation",
-    { vaultId: Id<"vaults">; shares: number },
-    { payout: number; fee: number; sharePrice: number }
-  >;
+const listVaultsRef = api.vaults.listVaults;
+const vaultDetailRef = api.vaults.getVaultDetail;
+const createVaultRef = api.vaults.createVault;
+const depositRef = api.vaults.depositUSDC;
+const withdrawRef = api.vaults.withdrawUSDC;
 
 const {
   vaultsList,

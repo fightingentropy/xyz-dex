@@ -21,12 +21,6 @@ import {
   type MetaAndAssetCtxs,
   type SpotMetaAndAssetCtxs,
 } from "../lib/hyperliquid";
-import {
-  fetchLighterFundingRates,
-  fetchLighterOrderBookDetails,
-  getLighterMarketId,
-  normalizeLighterSymbol,
-} from "../lib/lighter";
 import { resolutionToMs } from "../lib/candles";
 
 export interface Market {
@@ -538,7 +532,7 @@ export const removeFromWatchlist = (symbol: string) => {
 const SETTINGS_KEY = "trade-xyz-settings";
 const LAST_SYMBOL_KEY = "trade-xyz-last-symbol";
 const DEFAULT_SYMBOL = "HYPE";
-export type DataProvider = "hyperliquid" | "lighter";
+export type DataProvider = "hyperliquid";
 const DEFAULT_DATA_PROVIDER: DataProvider = "hyperliquid";
 
 interface Settings {
@@ -552,8 +546,7 @@ const loadSettings = (): Settings => {
     if (stored) {
       const parsed = JSON.parse(stored) as Partial<Settings>;
       const dataProvider =
-        parsed.dataProvider === "hyperliquid" ||
-        parsed.dataProvider === "lighter"
+        parsed.dataProvider === "hyperliquid"
           ? parsed.dataProvider
           : DEFAULT_DATA_PROVIDER;
       return {
@@ -597,7 +590,6 @@ const saveLastSymbol = (symbol: string) => {
   }
 };
 
-const DEFAULT_PERPS_LEVERAGE = "10x";
 const DEFAULT_SPOT_LEVERAGE = "1x";
 const BASELINE_PERPS = ["BTC", "ETH", "HYPE", "SOL", "ZEC"];
 const shouldUpdateTitle = () => window.location.pathname.startsWith("/trade");
@@ -913,7 +905,7 @@ const updateCurrentStatsFromMarket = (market: Market | null) => {
   }
 };
 
-const getTrackedAssets = (provider: DataProvider) => {
+const getTrackedAssets = () => {
   const perps = new Set(trackedPerps());
   const spots = new Set(trackedSpots());
 
@@ -929,17 +921,6 @@ const getTrackedAssets = (provider: DataProvider) => {
     if (perps.size === 0) {
       const fallback = untrack(() => currentSymbol());
       if (fallback) perps.add(fallback);
-    }
-  }
-
-  if (provider !== "hyperliquid") {
-    spots.delete("HYPE");
-    perps.delete("HYPE");
-    for (const symbol of perps) {
-      if (isXyzEquitySymbol(symbol)) perps.delete(symbol);
-    }
-    for (const symbol of spots) {
-      if (isXyzEquitySymbol(symbol)) spots.delete(symbol);
     }
   }
 
@@ -1085,13 +1066,6 @@ const parseNumber = (value: string | number | null | undefined): number => {
   return Number.isFinite(parsed) ? parsed : NaN;
 };
 
-const formatLighterLeverage = (fraction?: number): string => {
-  const parsed = parseNumber(fraction ?? null);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PERPS_LEVERAGE;
-  const leverage = Math.max(1, Math.floor(10000 / parsed));
-  return `${leverage}x`;
-};
-
 const LIVE_PRICE_RESOLUTION = "1";
 const LIVE_PRICE_LOOKBACK = 2;
 const LIVE_PRICE_MIN_FETCH_MS = 15000;
@@ -1100,8 +1074,7 @@ const hyperliquidLivePriceCache = new Map<
   { price: number; ts: number }
 >();
 
-const formatLiveMarkPrice = (value: number, provider: DataProvider): string =>
-  provider === "hyperliquid" ? formatPrice(value) : formatPriceValue(value);
+const formatLiveMarkPrice = (value: number): string => formatPrice(value);
 
 const getLiveSymbols = (): string[] => {
   const next = new Set<string>(BASELINE_PERPS);
@@ -1111,15 +1084,6 @@ const getLiveSymbols = (): string[] => {
     if (symbol) next.add(symbol);
   });
   return [...next];
-};
-
-const resolveMarketType = (symbol: string): Market["type"] => {
-  const list = markets();
-  const match = list.find((market) => market.symbol === symbol);
-  if (match) return match.type;
-  if (symbol === currentSymbol()) return currentMarketType();
-  if (symbol.toLowerCase().startsWith("xyz:")) return "equities";
-  return "perps";
 };
 
 const fetchHyperliquidLivePrice = async (
@@ -1151,32 +1115,14 @@ const fetchHyperliquidLivePrice = async (
   return price;
 };
 
-const fetchLighterLivePrice = async (
-  symbol: string,
-  marketType: Market["type"],
-  signal?: AbortSignal,
-): Promise<number | null> => {
-  const lighterType = marketType === "spot" ? "spot" : "perps";
-  const marketId = await getLighterMarketId(symbol, lighterType);
-  if (marketId == null) return null;
-  const detail = await fetchLighterOrderBookDetails({ marketId, signal });
-  if (!detail) return null;
-  const price = parseNumber(detail.last_trade_price ?? null);
-  if (!Number.isFinite(price) || price <= 0) return null;
-  return price;
-};
-
-const applyLivePriceUpdates = (
-  provider: DataProvider,
-  updates: Map<string, number>,
-) => {
+const applyLivePriceUpdates = (updates: Map<string, number>) => {
   if (updates.size === 0) return;
 
   const current = currentSymbol();
   const currentType = currentMarketType();
   const currentPrice = updates.get(current);
   if (currentPrice != null) {
-    const formatted = formatLiveMarkPrice(currentPrice, provider);
+    const formatted = formatLiveMarkPrice(currentPrice);
     setMarkPrice(formatted);
     if (currentType === "spot") {
       setOraclePrice(formatted);
@@ -1361,131 +1307,11 @@ const buildHyperliquidMarkets = async (
   return { markets: newMarkets, metaAndCtxs, spotData, equitiesMetaAndCtxs };
 };
 
-const fetchLighterPerpMarket = async (
-  symbol: string,
-  fundingRates: Map<number, number>,
-  signal?: AbortSignal,
-): Promise<Market | null> => {
-  const marketId = await getLighterMarketId(symbol, "perps");
-  if (marketId == null) return null;
-  try {
-    const detail = await fetchLighterOrderBookDetails({ marketId, signal });
-    if (!detail) return null;
-    const baseSymbol =
-      normalizeLighterSymbol(detail.symbol || symbol) || symbol;
-
-    const priceVal = parseNumber(detail.last_trade_price);
-    const changeRaw = parseNumber(detail.daily_price_change);
-    const volumeRaw = parseNumber(detail.daily_quote_token_volume);
-    const oiBase = parseNumber(detail.open_interest);
-    const openInterestVal = Number.isFinite(oiBase)
-      ? Number.isFinite(priceVal)
-        ? oiBase * priceVal
-        : oiBase
-      : 0;
-    const fundingRaw = fundingRates.get(marketId) ?? 0;
-
-    return {
-      symbol: baseSymbol,
-      name: `${baseSymbol}-USDC`,
-      price: formatPriceValue(priceVal),
-      change24h: Number.isFinite(changeRaw) ? changeRaw : 0,
-      volume24h: Number.isFinite(volumeRaw) ? volumeRaw : 0,
-      openInterest: openInterestVal,
-      funding: Number.isFinite(fundingRaw) ? fundingRaw * 100 : 0,
-      type: "perps",
-      leverage: formatLighterLeverage(detail.default_initial_margin_fraction),
-      watchlist: isWatchlisted(baseSymbol),
-    };
-  } catch (error) {
-    if (signal?.aborted) return null;
-    console.warn(`Lighter perp market failed: ${symbol}`, error);
-    return null;
-  }
-};
-
-const fetchLighterSpotMarket = async (
-  symbol: string,
-  signal?: AbortSignal,
-): Promise<Market | null> => {
-  const marketId = await getLighterMarketId(symbol, "spot");
-  if (marketId == null) return null;
-  try {
-    const detail = await fetchLighterOrderBookDetails({ marketId, signal });
-    if (!detail) return null;
-    const baseSymbol =
-      normalizeLighterSymbol(detail.symbol || symbol) || symbol;
-
-    const priceVal = parseNumber(detail.last_trade_price);
-    const changeRaw = parseNumber(detail.daily_price_change);
-    const volumeRaw = parseNumber(detail.daily_quote_token_volume);
-
-    return {
-      symbol: baseSymbol,
-      name: `${baseSymbol}-USDC`,
-      price: formatPriceValue(priceVal),
-      change24h: Number.isFinite(changeRaw) ? changeRaw : 0,
-      volume24h: Number.isFinite(volumeRaw) ? volumeRaw : 0,
-      openInterest: 0,
-      funding: 0,
-      type: "spot",
-      leverage: DEFAULT_SPOT_LEVERAGE,
-      watchlist: isWatchlisted(baseSymbol),
-    };
-  } catch (error) {
-    if (signal?.aborted) return null;
-    console.warn(`Lighter spot market failed: ${symbol}`, error);
-    return null;
-  }
-};
-
-const buildLighterMarkets = async (
-  tracked: { perps: string[]; spots: string[] },
-  signal?: AbortSignal,
-): Promise<Market[]> => {
-  const perpsSymbols = [...new Set(tracked.perps)];
-  const spotSymbols = [...new Set(tracked.spots)];
-  const fundingRates = new Map<number, number>();
-
-  if (perpsSymbols.length > 0) {
-    try {
-      const rates = await fetchLighterFundingRates(signal);
-      rates
-        .filter((rate) => rate.exchange === "lighter")
-        .forEach((rate) => {
-          const parsed = parseNumber(rate.rate);
-          if (Number.isFinite(parsed)) {
-            fundingRates.set(rate.market_id, parsed);
-          }
-        });
-    } catch (error) {
-      if (signal?.aborted) return [];
-      console.warn("Lighter funding rates failed:", error);
-    }
-  }
-
-  const [perpsMarkets, spotMarkets] = await Promise.all([
-    Promise.all(
-      perpsSymbols.map((symbol) =>
-        fetchLighterPerpMarket(symbol, fundingRates, signal),
-      ),
-    ),
-    Promise.all(
-      spotSymbols.map((symbol) => fetchLighterSpotMarket(symbol, signal)),
-    ),
-  ]);
-
-  return [...perpsMarkets, ...spotMarkets].filter((market): market is Market =>
-    Boolean(market),
-  );
-};
-
 const fetchAndUpdateMarkets = async (
   signal?: AbortSignal,
   updateCurrentStats = true,
 ): Promise<void> => {
-  const provider = dataProvider();
-  const trackedAssets = getTrackedAssets(provider);
+  const trackedAssets = getTrackedAssets();
 
   try {
     let newMarkets: Market[] = [];
@@ -1493,15 +1319,11 @@ const fetchAndUpdateMarkets = async (
     let spotData: SpotMetaAndAssetCtxs | null = null;
     let equitiesMetaAndCtxs: MetaAndAssetCtxs | null = null;
 
-    if (provider === "hyperliquid") {
-      const result = await buildHyperliquidMarkets(trackedAssets, signal);
-      newMarkets = result.markets;
-      metaAndCtxs = result.metaAndCtxs;
-      spotData = result.spotData;
-      equitiesMetaAndCtxs = result.equitiesMetaAndCtxs;
-    } else {
-      newMarkets = await buildLighterMarkets(trackedAssets, signal);
-    }
+    const result = await buildHyperliquidMarkets(trackedAssets, signal);
+    newMarkets = result.markets;
+    metaAndCtxs = result.metaAndCtxs;
+    spotData = result.spotData;
+    equitiesMetaAndCtxs = result.equitiesMetaAndCtxs;
 
     if (signal?.aborted) return;
 
@@ -1514,32 +1336,28 @@ const fetchAndUpdateMarkets = async (
 
     if (!updateCurrentStats) return;
 
-    if (provider === "hyperliquid") {
-      const coin = selected?.symbol ?? currentSymbol();
-      const marketType = selected?.type ?? currentMarketType();
-      if (marketType === "spot") {
-        if (spotData) {
-          updateCurrentSpotPrices(coin, spotData);
-        } else {
-          updateCurrentStatsFromMarket(selected);
-        }
-      } else if (marketType === "equities") {
-        if (equitiesMetaAndCtxs) {
-          updateCurrentSymbolPrices(coin, equitiesMetaAndCtxs);
-        } else {
-          updateCurrentStatsFromMarket(selected);
-        }
+    const coin = selected?.symbol ?? currentSymbol();
+    const marketType = selected?.type ?? currentMarketType();
+    if (marketType === "spot") {
+      if (spotData) {
+        updateCurrentSpotPrices(coin, spotData);
       } else {
-        if (metaAndCtxs) {
-          updateCurrentSymbolPrices(coin, metaAndCtxs);
-        } else {
-          updateCurrentStatsFromMarket(selected);
-        }
+        updateCurrentStatsFromMarket(selected);
       }
-      return;
+    } else if (marketType === "equities") {
+      if (equitiesMetaAndCtxs) {
+        updateCurrentSymbolPrices(coin, equitiesMetaAndCtxs);
+      } else {
+        updateCurrentStatsFromMarket(selected);
+      }
+    } else {
+      if (metaAndCtxs) {
+        updateCurrentSymbolPrices(coin, metaAndCtxs);
+      } else {
+        updateCurrentStatsFromMarket(selected);
+      }
     }
-
-    updateCurrentStatsFromMarket(selected);
+    return;
   } catch (e) {
     if (signal?.aborted) return;
     console.error("Failed to fetch markets:", e);
@@ -1554,47 +1372,25 @@ const fetchAndUpdateMarkets = async (
 const fetchAndUpdateLivePrices = async (
   signal?: AbortSignal,
 ): Promise<void> => {
-  const provider = dataProvider();
   const symbols = getLiveSymbols();
   if (symbols.length === 0) return;
 
   const updates = new Map<string, number>();
 
-  if (provider === "hyperliquid") {
-    await Promise.all(
-      symbols.map(async (symbol) => {
-        try {
-          const price = await fetchHyperliquidLivePrice(symbol, signal);
-          if (price != null) updates.set(symbol, price);
-        } catch (error) {
-          if (signal?.aborted) return;
-          console.warn(`Live price failed: ${symbol}`, error);
-        }
-      }),
-    );
-  } else {
-    const typeBySymbol = new Map<string, Market["type"]>();
-    markets().forEach((market) => {
-      typeBySymbol.set(market.symbol, market.type);
-    });
-    await Promise.all(
-      symbols.map(async (symbol) => {
-        const marketType =
-          typeBySymbol.get(symbol) ?? resolveMarketType(symbol);
-        if (marketType === "equities") return;
-        try {
-          const price = await fetchLighterLivePrice(symbol, marketType, signal);
-          if (price != null) updates.set(symbol, price);
-        } catch (error) {
-          if (signal?.aborted) return;
-          console.warn(`Live price failed: ${symbol}`, error);
-        }
-      }),
-    );
-  }
+  await Promise.all(
+    symbols.map(async (symbol) => {
+      try {
+        const price = await fetchHyperliquidLivePrice(symbol, signal);
+        if (price != null) updates.set(symbol, price);
+      } catch (error) {
+        if (signal?.aborted) return;
+        console.warn(`Live price failed: ${symbol}`, error);
+      }
+    }),
+  );
 
   if (signal?.aborted) return;
-  applyLivePriceUpdates(provider, updates);
+  applyLivePriceUpdates(updates);
 };
 
 const MARKETS_POLL_MS = 15000;

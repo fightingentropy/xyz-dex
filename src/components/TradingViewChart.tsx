@@ -36,7 +36,6 @@ import {
 } from "../stores/market";
 import { getPositionForSymbol } from "../stores/clob";
 import { resolutionToMs, type Candle } from "../lib/candles";
-import { fetchLighterCandles } from "../lib/lighter";
 import {
   fetchHyperliquidCandles,
   normalizeSymbol,
@@ -355,24 +354,12 @@ const TradingViewChart: Component = () => {
   };
 
   const fetchCandlesForProvider = async (
-    provider: DataProvider,
     symbol: string,
     res: Resolution,
     fromMs: number,
     toMs: number,
-    marketType: "perps" | "spot" | "equities",
     signal?: AbortSignal,
   ) => {
-    if (provider === "lighter") {
-      return fetchLighterCandles({
-        coin: symbol,
-        resolution: res,
-        fromMs,
-        toMs,
-        marketType: marketType === "spot" ? "spot" : "perps",
-        signal,
-      });
-    }
     return fetchHyperliquidCandles({
       coin: symbol,
       resolution: res,
@@ -426,12 +413,10 @@ const TradingViewChart: Component = () => {
 
       try {
         const newCandles = await fetchCandlesForProvider(
-          provider,
           symbol,
           res,
           fromMs,
           now,
-          marketType,
           signal,
         );
 
@@ -478,12 +463,10 @@ const TradingViewChart: Component = () => {
       const fromMs = now - periodMs * barsCount;
 
       const candles = await fetchCandlesForProvider(
-        provider,
         symbol,
         res,
         fromMs,
         now,
-        marketType,
         signal,
       );
 
@@ -552,62 +535,6 @@ const TradingViewChart: Component = () => {
 
     const marketType = currentMarketType();
     const generation = streamGeneration;
-    if (provider === "lighter") {
-      const periodMs = resolutionToMs(res);
-      const poll = async () => {
-        if (generation !== streamGeneration) return;
-        const now = Date.now();
-        const lastTime =
-          localCandles.length > 0
-            ? localCandles[localCandles.length - 1].time
-            : now - periodMs * 2;
-        const fromMs = Math.max(0, lastTime - periodMs);
-
-        try {
-          const candles = await fetchLighterCandles({
-            coin: symbol,
-            resolution: res,
-            fromMs,
-            toMs: now,
-            marketType: marketType === "spot" ? "spot" : "perps",
-          });
-          if (generation !== streamGeneration) return;
-          const latest = candles[candles.length - 1];
-          if (!latest || !Number.isFinite(latest.time)) return;
-
-          updateLastCandle(provider, `${symbol}-${marketType}`, res, latest);
-          const updateMode = upsertLocalCandle(latest);
-          if (updateMode === "outOfOrder") {
-            refreshMovingAveragesFull(localCandles);
-          } else {
-            refreshMovingAveragesIncremental();
-          }
-
-          candleSeries?.update({
-            time: (latest.time / 1000) as Time,
-            open: latest.open,
-            high: latest.high,
-            low: latest.low,
-            close: latest.close,
-          });
-
-          volumeSeries?.update({
-            time: (latest.time / 1000) as Time,
-            value: latest.volume,
-            color:
-              latest.close >= latest.open
-                ? "rgba(80, 227, 171, 0.5)"
-                : "rgba(255, 85, 114, 0.5)",
-          });
-        } catch {
-          // Ignore failed polls
-        }
-      };
-
-      poll();
-      streamTimer = setInterval(poll, 5000) as unknown as number;
-      return;
-    }
     const interval = toHyperliquidInterval(res);
     const streamSymbol = normalizeSymbol(symbol);
     const streamUrl = "wss://api.hyperliquid.xyz/ws";

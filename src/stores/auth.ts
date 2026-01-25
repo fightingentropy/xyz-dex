@@ -1,5 +1,4 @@
 import { createMemo, createRoot, createSignal } from "solid-js";
-import type { FunctionReference } from "convex/server";
 import { api } from "../../convex/_generated/api";
 import { convex, createConvexQuery } from "../lib/convex";
 
@@ -14,25 +13,11 @@ type AuthSession = {
   user: AuthUser;
 };
 
-type CurrentUser = {
-  _id: string;
-  name?: string;
-  email?: string;
-  isAdmin: boolean;
-  createdAt: number;
-  lastSeenAt: number;
-};
-
 const STORAGE_KEY = "trade_xyz_auth_session";
 
-const actionRef = (name: string) =>
-  name as unknown as FunctionReference<"action">;
-const queryRef = <TArgs extends Record<string, any>, TResult>(name: string) =>
-  name as unknown as FunctionReference<"query", TArgs, TResult>;
-
-const signInRef = actionRef("auth:signIn");
-const signUpRef = actionRef("auth:signUp");
-const currentUserRef = queryRef<{}, CurrentUser | null>("users:getCurrentUser");
+const signInRef = api.auth.signIn;
+const signUpRef = api.auth.signUp;
+const currentUserRef = api.users.getCurrentUser;
 
 const {
   authReady,

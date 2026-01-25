@@ -6,13 +6,7 @@ import {
   login,
   logout,
 } from "../stores/auth";
-import {
-  dataProvider,
-  setDataProvider,
-  showOrderBook,
-  setShowOrderBook,
-} from "../stores/market";
-import type { DataProvider } from "../stores/market";
+import { showOrderBook, setShowOrderBook } from "../stores/market";
 import { currentPage, setCurrentPage } from "../stores/page";
 import {
   isPortfolioMarginEnabled,
@@ -365,19 +359,10 @@ const Header: Component = () => {
                     Data
                   </span>
                 </div>
-                <label class="flex items-center justify-between px-3 py-2.5 hover:bg-brand-border/30 cursor-pointer transition-colors">
+                <div class="flex items-center justify-between px-3 py-2.5">
                   <span class="text-sm text-slate-200">Provider</span>
-                  <select
-                    class="rounded border border-brand-border bg-brand-screen px-2 py-1 text-xs text-slate-200 focus:border-brand-accent"
-                    value={dataProvider()}
-                    onChange={(event) =>
-                      setDataProvider(event.currentTarget.value as DataProvider)
-                    }
-                  >
-                    <option value="hyperliquid">Hyperliquid</option>
-                    <option value="lighter">Lighter</option>
-                  </select>
-                </label>
+                  <span class="text-xs text-slate-200">Hyperliquid</span>
+                </div>
               </div>
             </>
           )}

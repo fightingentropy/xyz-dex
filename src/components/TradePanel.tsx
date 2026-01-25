@@ -171,7 +171,7 @@ const TradePanel: Component = () => {
       </div>
       <div class="flex-1 overflow-auto">
         <Show when={activeTab() === "balances"}>
-          <BalancesPanel showMarginCard={false} compact />
+          <BalancesPanel compact />
         </Show>
         <Show when={activeTab() === "positions"}>
           <PositionsTable compact />

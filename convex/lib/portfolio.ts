@@ -81,10 +81,12 @@ const buildShortExposureByAsset = (positions: PositionExposure[]) => {
 const resolveSpotPrice = (
   asset: string,
   spotPrices?: Record<string, number>,
-) => {
+): number => {
   const normalized = normalizeAssetSymbol(asset);
   const live = spotPrices?.[normalized];
-  if (Number.isFinite(live) && live > 0) return live;
+  if (typeof live === "number" && Number.isFinite(live) && live > 0) {
+    return live;
+  }
   return getDemoPrice(normalized);
 };
 
