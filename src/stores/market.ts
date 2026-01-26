@@ -105,6 +105,19 @@ const getWatchlistCoreSymbol = (symbol: string): string => {
   return trimmed.toUpperCase();
 };
 
+const NON_CRYPTO_SYMBOLS = new Set<string>([
+  ...COMMODITY_SYMBOLS,
+  "NDX",
+  "XYZ100",
+  "100",
+]);
+Object.entries(DEFAULT_WATCHLISTS).forEach(([name, symbols]) => {
+  if (name === DEFAULT_WATCHLIST_NAME) return;
+  symbols.forEach((symbol) => {
+    NON_CRYPTO_SYMBOLS.add(getWatchlistCoreSymbol(symbol));
+  });
+});
+
 const getWatchlistAliases = (symbol: string): string[] => {
   const core = getWatchlistCoreSymbol(symbol);
   if (!COMMODITY_SYMBOLS.has(core)) return [symbol];
@@ -216,6 +229,13 @@ const loadWatchlists = (): WatchlistsState => {
       normalizeWatchlist(list),
     ]),
   );
+  if (fallbackLists[DEFAULT_WATCHLIST_NAME]) {
+    fallbackLists[DEFAULT_WATCHLIST_NAME] = normalizeWatchlist(
+      fallbackLists[DEFAULT_WATCHLIST_NAME].filter(
+        (symbol) => !NON_CRYPTO_SYMBOLS.has(getWatchlistCoreSymbol(symbol)),
+      ),
+    );
+  }
 
   try {
     const stored = localStorage.getItem(WATCHLISTS_KEY);
@@ -236,6 +256,14 @@ const loadWatchlists = (): WatchlistsState => {
             lists[key] = normalizeWatchlist([...mergedSet]);
           } else {
             lists[key] = storedList;
+          }
+          if (key === DEFAULT_WATCHLIST_NAME) {
+            lists[key] = normalizeWatchlist(
+              lists[key].filter(
+                (symbol) =>
+                  !NON_CRYPTO_SYMBOLS.has(getWatchlistCoreSymbol(symbol)),
+              ),
+            );
           }
         });
         let activeId =
@@ -263,7 +291,10 @@ const loadWatchlists = (): WatchlistsState => {
           fallbackLists[DEFAULT_WATCHLIST_NAME] = normalizeWatchlist([
             ...fallbackLists[DEFAULT_WATCHLIST_NAME],
             ...parsed,
-          ]);
+          ]).filter(
+            (symbol) =>
+              !NON_CRYPTO_SYMBOLS.has(getWatchlistCoreSymbol(symbol)),
+          );
         }
       }
     }
