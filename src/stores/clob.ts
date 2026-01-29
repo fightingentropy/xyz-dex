@@ -218,7 +218,19 @@ const isMarkPricesValidationError = (error: unknown) => {
   );
 };
 
+const isSpotPricesValidationError = (error: unknown) => {
+  const text = getErrorText(error).toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes("spotprices") &&
+    (text.includes("not in the validator") ||
+      text.includes("extra field") ||
+      text.includes("argumentvalidationerror"))
+  );
+};
+
 let markPricesSupported = true;
+let spotPricesSupported = true;
 
 const [lastPrices, setLastPrices] = createStore<Record<string, number>>({});
 
@@ -772,9 +784,13 @@ export const placeOrder = async ({
     }
   }
   const includeSpotPrices =
-    isPortfolioMarginEnabled() && Object.keys(spotPrices).length > 0;
+    spotPricesSupported &&
+    isPortfolioMarginEnabled() &&
+    Object.keys(spotPrices).length > 0;
+  const includeMarkPrices =
+    markPricesSupported && Object.keys(markPrices).length > 0;
 
-  const baseArgs = {
+  const coreArgs = {
     symbol,
     side,
     type,
@@ -784,39 +800,39 @@ export const placeOrder = async ({
     collateral,
     marginType,
     markPrice: mark,
-    ...(includeSpotPrices ? { spotPrices } : {}),
     ...getOwnerArgs(),
   };
 
-  try {
-    const includeMarkPrices =
-      markPricesSupported && Object.keys(markPrices).length > 0;
-    const orderArgs = {
-      ...baseArgs,
-      ...(includeMarkPrices ? { markPrices } : {}),
-    };
-    await convex.mutation(api.orders.placePerpsOrder, orderArgs);
-    return { ok: true };
-  } catch (error) {
-    if (isMarkPricesValidationError(error)) {
-      markPricesSupported = false;
-      try {
-        await convex.mutation(api.orders.placePerpsOrder, baseArgs);
-        return { ok: true };
-      } catch (retryError) {
-        const message =
-          retryError instanceof Error
-            ? retryError.message
-            : "Order submission failed.";
-        console.error("Failed to place order:", retryError);
-        return { ok: false, error: message };
+  const buildArgs = (opts: { spots: boolean; marks: boolean }) => ({
+    ...coreArgs,
+    ...(opts.spots && includeSpotPrices ? { spotPrices } : {}),
+    ...(opts.marks && includeMarkPrices ? { markPrices } : {}),
+  });
+
+  const tryOrder = async (opts: {
+    spots: boolean;
+    marks: boolean;
+  }): Promise<{ ok: true } | { ok: false; error: string }> => {
+    try {
+      await convex.mutation(api.orders.placePerpsOrder, buildArgs(opts));
+      return { ok: true };
+    } catch (error) {
+      if (opts.marks && isMarkPricesValidationError(error)) {
+        markPricesSupported = false;
+        return tryOrder({ ...opts, marks: false });
       }
+      if (opts.spots && isSpotPricesValidationError(error)) {
+        spotPricesSupported = false;
+        return tryOrder({ ...opts, spots: false });
+      }
+      const message =
+        error instanceof Error ? error.message : "Order submission failed.";
+      console.error("Failed to place order:", error);
+      return { ok: false, error: message };
     }
-    const message =
-      error instanceof Error ? error.message : "Order submission failed.";
-    console.error("Failed to place order:", error);
-    return { ok: false, error: message };
-  }
+  };
+
+  return tryOrder({ spots: includeSpotPrices, marks: includeMarkPrices });
 };
 
 export const updatePositionTpsl = async ({
