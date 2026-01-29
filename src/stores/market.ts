@@ -48,7 +48,7 @@ const COMMODITY_SYMBOLS = new Set([
   "NATGAS",
   "PLATINUM",
   "SILVER",
-  "URANIUM",
+  "URNM",
 ]);
 const DEFAULT_TICKER_WATCHLIST = [
   "BTC",
@@ -60,7 +60,7 @@ const DEFAULT_TICKER_WATCHLIST = [
   "NATGAS",
   "PLATINUM",
   "SILVER",
-  "URANIUM",
+  "URNM",
 ];
 const DEFAULT_WATCHLISTS: Record<string, string[]> = {
   crypto: ["BTC", "ETH", "HYPE"],
@@ -71,7 +71,7 @@ const DEFAULT_WATCHLISTS: Record<string, string[]> = {
     "NATGAS",
     "PLATINUM",
     "SILVER",
-    "URANIUM",
+    "URNM",
   ],
   indices: ["xyz:XYZ100"],
   stocks: [
