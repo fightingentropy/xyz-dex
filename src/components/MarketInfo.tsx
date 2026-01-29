@@ -70,6 +70,7 @@ const ICON_SYMBOLS = new Set([
   "GOLD",
   "COPPER",
   "NATGAS",
+  "PLATINUM",
 ]);
 
 const MarketInfo: Component = () => {
@@ -82,8 +83,7 @@ const MarketInfo: Component = () => {
       : symbol;
   };
   const iconSrc = () =>
-    ICON_SOURCES[displaySymbol()] ??
-    `/${displaySymbol().toLowerCase()}.svg`;
+    ICON_SOURCES[displaySymbol()] ?? `/${displaySymbol().toLowerCase()}.svg`;
   const displayMarketName = () => getUrlSymbol(currentMarket());
   const leverageLabel = () =>
     currentMarketType() === "spot" ? "Spot" : currentMarketLeverage();
@@ -148,11 +148,7 @@ const MarketInfo: Component = () => {
             </div>
           }
         >
-          <img
-            src={iconSrc()}
-            alt={displaySymbol()}
-            class="w-6 h-6"
-          />
+          <img src={iconSrc()} alt={displaySymbol()} class="w-6 h-6" />
         </Show>
         <span class="font-semibold text-slate-100">{displayMarketName()}</span>
         <span class="text-xs px-1.5 py-0.5 bg-slate-800 text-slate-300 rounded">

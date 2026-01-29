@@ -46,6 +46,7 @@ const COMMODITY_SYMBOLS = new Set([
   "COPPER",
   "GOLD",
   "NATGAS",
+  "PLATINUM",
   "SILVER",
   "URANIUM",
 ]);
@@ -57,12 +58,21 @@ const DEFAULT_TICKER_WATCHLIST = [
   "COPPER",
   "GOLD",
   "NATGAS",
+  "PLATINUM",
   "SILVER",
   "URANIUM",
 ];
 const DEFAULT_WATCHLISTS: Record<string, string[]> = {
   crypto: ["BTC", "ETH", "HYPE"],
-  commodities: ["ALUMINIUM", "COPPER", "GOLD", "NATGAS", "SILVER", "URANIUM"],
+  commodities: [
+    "ALUMINIUM",
+    "COPPER",
+    "GOLD",
+    "NATGAS",
+    "PLATINUM",
+    "SILVER",
+    "URANIUM",
+  ],
   indices: ["xyz:XYZ100"],
   stocks: [
     "xyz:AAPL",
@@ -292,8 +302,7 @@ const loadWatchlists = (): WatchlistsState => {
             ...fallbackLists[DEFAULT_WATCHLIST_NAME],
             ...parsed,
           ]).filter(
-            (symbol) =>
-              !NON_CRYPTO_SYMBOLS.has(getWatchlistCoreSymbol(symbol)),
+            (symbol) => !NON_CRYPTO_SYMBOLS.has(getWatchlistCoreSymbol(symbol)),
           );
         }
       }

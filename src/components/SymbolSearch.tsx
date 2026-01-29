@@ -179,6 +179,7 @@ const ICON_SYMBOLS = new Set([
   "GOLD",
   "COPPER",
   "NATGAS",
+  "PLATINUM",
 ]);
 
 const SymbolSearch: Component = () => {
@@ -247,7 +248,10 @@ const SymbolSearch: Component = () => {
       ) {
         continue;
       }
-      if (f === "watchlist" && !isTickerWatchlisted(market.symbol, market.type)) {
+      if (
+        f === "watchlist" &&
+        !isTickerWatchlisted(market.symbol, market.type)
+      ) {
         continue;
       }
       if (f === "perps-xyz" && market.type !== "equities") {
@@ -293,7 +297,10 @@ const SymbolSearch: Component = () => {
     setListHeight(listRef.clientHeight);
     const row = listRef.querySelector<HTMLElement>(".market-row");
     if (row) {
-      const nextHeight = Math.max(1, Math.round(row.getBoundingClientRect().height));
+      const nextHeight = Math.max(
+        1,
+        Math.round(row.getBoundingClientRect().height),
+      );
       setRowHeight(nextHeight);
     }
   };

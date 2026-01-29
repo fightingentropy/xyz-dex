@@ -22,6 +22,7 @@ const RESOLUTION_LABELS: Record<Resolution, string> = {
 const RAW_SYMBOLS = new Set([
   "COPPER",
   "NATGAS",
+  "PLATINUM",
   "SILVER",
   "GOLD",
   "ALUMINIUM",
@@ -298,9 +299,7 @@ const ChartsGrid: Component = () => {
         )}
       </div>
 
-      <div
-        class={`grid h-full gap-px bg-brand-border ${gridClasses()}`}
-      >
+      <div class={`grid h-full gap-px bg-brand-border ${gridClasses()}`}>
         {symbols().map((symbol) => (
           <div class="relative flex min-h-0 flex-col bg-brand-screen">
             <div class="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-md border border-brand-border bg-brand-surface/80 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-brand-slate-200">
