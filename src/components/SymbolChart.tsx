@@ -133,6 +133,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     resolution: string,
     fromMs: number,
     toMs: number,
+    priority?: "high" | "low",
     signal?: AbortSignal,
   ) => {
     return fetchHyperliquidCandles({
@@ -141,6 +142,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
       fromMs,
       toMs,
       signal,
+      priority,
     });
   };
 
@@ -181,6 +183,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
           resolution,
           fromMs,
           now,
+          "high",
           signal,
         );
 
@@ -222,6 +225,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
         resolution,
         fromMs,
         now,
+        "high",
         signal,
       );
 

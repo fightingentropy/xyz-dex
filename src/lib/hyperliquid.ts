@@ -11,7 +11,40 @@ const INFO_MIN_INTERVAL_MS = 300;
 const INFO_RATE_LIMIT_COOLDOWN_MS = 2500;
 let infoLastRequestAt = 0;
 let infoRateLimitedUntil = 0;
-let infoQueue: Promise<void> = Promise.resolve();
+
+type InfoPriority = "high" | "low";
+
+type InfoQueueTask = {
+  run: () => Promise<Response | null>;
+  resolve: (value: Response | null) => void;
+  reject: (reason?: unknown) => void;
+  priority: InfoPriority;
+};
+
+const infoQueue: InfoQueueTask[] = [];
+let infoQueueRunning = false;
+
+const drainInfoQueue = async () => {
+  if (infoQueueRunning) return;
+  infoQueueRunning = true;
+  while (infoQueue.length > 0) {
+    const highIndex = infoQueue.findIndex(
+      (task) => task.priority === "high",
+    );
+    const task =
+      highIndex >= 0
+        ? infoQueue.splice(highIndex, 1)[0]
+        : infoQueue.shift();
+    if (!task) break;
+    try {
+      const result = await task.run();
+      task.resolve(result);
+    } catch (error) {
+      task.reject(error);
+    }
+  }
+  infoQueueRunning = false;
+};
 
 const delayWithAbort = (ms: number, signal?: AbortSignal): Promise<void> => {
   if (ms <= 0) return Promise.resolve();
@@ -34,43 +67,48 @@ const delayWithAbort = (ms: number, signal?: AbortSignal): Promise<void> => {
   });
 };
 
-const postHyperliquidInfo = async (
+const postHyperliquidInfo = (
   payload: Record<string, unknown>,
   signal?: AbortSignal,
+  options?: { priority?: InfoPriority },
 ): Promise<Response | null> => {
-  const run = async () => {
-    if (signal?.aborted) return null;
-    const now = Date.now();
-    if (now < infoRateLimitedUntil) return null;
-    const waitMs = Math.max(0, infoLastRequestAt + INFO_MIN_INTERVAL_MS - now);
-    if (waitMs > 0) {
-      await delayWithAbort(waitMs, signal);
-      if (signal?.aborted) return null;
-    }
-    infoLastRequestAt = Date.now();
-    const response = await fetch(INFO_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal,
-    });
-    if (response.status === 429) {
-      const retryAfter = response.headers.get("retry-after");
-      const retryMs = retryAfter ? Number(retryAfter) * 1000 : NaN;
-      const cooldownMs = Number.isFinite(retryMs)
-        ? retryMs
-        : INFO_RATE_LIMIT_COOLDOWN_MS;
-      infoRateLimitedUntil = Date.now() + cooldownMs;
-    }
-    return response;
-  };
+  if (signal?.aborted) return Promise.resolve(null);
+  const priority = options?.priority ?? "low";
 
-  const task = infoQueue.then(run, run);
-  infoQueue = task.then(
-    () => undefined,
-    () => undefined,
-  );
-  return task;
+  return new Promise<Response | null>((resolve, reject) => {
+    const run = async () => {
+      if (signal?.aborted) return null;
+      const now = Date.now();
+      if (now < infoRateLimitedUntil) return null;
+      const waitMs = Math.max(
+        0,
+        infoLastRequestAt + INFO_MIN_INTERVAL_MS - now,
+      );
+      if (waitMs > 0) {
+        await delayWithAbort(waitMs, signal);
+        if (signal?.aborted) return null;
+      }
+      infoLastRequestAt = Date.now();
+      const response = await fetch(INFO_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal,
+      });
+      if (response.status === 429) {
+        const retryAfter = response.headers.get("retry-after");
+        const retryMs = retryAfter ? Number(retryAfter) * 1000 : NaN;
+        const cooldownMs = Number.isFinite(retryMs)
+          ? retryMs
+          : INFO_RATE_LIMIT_COOLDOWN_MS;
+        infoRateLimitedUntil = Date.now() + cooldownMs;
+      }
+      return response;
+    };
+
+    infoQueue.push({ run, resolve, reject, priority });
+    void drainInfoQueue();
+  });
 };
 
 export interface AssetMeta {
@@ -246,12 +284,14 @@ export const fetchHyperliquidCandles = async ({
   fromMs,
   toMs,
   signal,
+  priority,
 }: {
   coin: string;
   resolution: string;
   fromMs: number;
   toMs: number;
   signal?: AbortSignal;
+  priority?: InfoPriority;
 }): Promise<
   {
     time: number;
@@ -275,7 +315,7 @@ export const fetchHyperliquidCandles = async ({
   };
 
   try {
-    const response = await postHyperliquidInfo(payload, signal);
+    const response = await postHyperliquidInfo(payload, signal, { priority });
 
     if (!response) return [];
     if (!response.ok) {

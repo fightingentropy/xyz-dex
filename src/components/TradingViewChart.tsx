@@ -358,6 +358,7 @@ const TradingViewChart: Component = () => {
     res: Resolution,
     fromMs: number,
     toMs: number,
+    priority?: "high" | "low",
     signal?: AbortSignal,
   ) => {
     return fetchHyperliquidCandles({
@@ -366,6 +367,7 @@ const TradingViewChart: Component = () => {
       fromMs,
       toMs,
       signal,
+      priority,
     });
   };
 
@@ -417,6 +419,7 @@ const TradingViewChart: Component = () => {
           res,
           fromMs,
           now,
+          "high",
           signal,
         );
 
@@ -467,6 +470,7 @@ const TradingViewChart: Component = () => {
         res,
         fromMs,
         now,
+        "high",
         signal,
       );
 
