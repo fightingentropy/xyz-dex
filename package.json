@@ -4,22 +4,22 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n convex,app -c yellow,cyan \"CONVEX_NO_UPDATE_CHECK=true bunx convex dev\" \"vite\"",
-    "dev:convex": "CONVEX_NO_UPDATE_CHECK=true bunx convex dev",
+    "dev": "vite",
+    "dev:convex": "CONVEX_NO_UPDATE_CHECK=true bun x convex dev --env-file .env.local --local",
     "dev:ui": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "deploy:convex": "CONVEX_NO_UPDATE_CHECK=true bunx convex deploy"
+    "deploy:convex": "bash -lc \"export CONVEX_DEPLOYMENT=$(grep -m1 '^CONVEX_DEPLOYMENT=' .env.local | cut -d= -f2- | sed -E 's/[[:space:]]+#.*$//'); CONVEX_NO_UPDATE_CHECK=true bun x convex deploy\""
   },
   "dependencies": {
     "convex": "^1.31.7",
     "lightweight-charts": "^5.1.0",
-    "solid-js": "^1.9.10"
+    "solid-js": "^1.9.11"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
-    "@types/node": "^25.0.10",
-    "autoprefixer": "^10.4.23",
+    "@types/node": "^25.2.0",
+    "autoprefixer": "^10.4.24",
     "concurrently": "^9.2.1",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.9.3",

@@ -45,46 +45,46 @@ between Classic and Portfolio. Full definitions and formulas live in
 Install dependencies:
 
 ```sh
-npm install
+bun install
 ```
 
-Create `.env.local` (Convex + app):
+Create `.env.local` with at least:
 
 ```
-# Written automatically when you run `npx convex dev`
-CONVEX_DEPLOYMENT=local:local-your-deployment
-
+# Convex will set CONVEX_DEPLOYMENT when you run convex dev the first time
 VITE_CONVEX_URL=http://127.0.0.1:3210
 
-# Custom auth (Convex)
+# Custom auth (Convex) – local dev
 CUSTOM_AUTH_ISSUER=http://127.0.0.1:3210
-# Local Convex HTTP routes are under /http
 CUSTOM_AUTH_JWKS_URL=http://127.0.0.1:3210/http/.well-known/jwks.json
 CUSTOM_AUTH_AUDIENCE=trade-xyz
-CUSTOM_AUTH_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nREPLACE_ME\n-----END PRIVATE KEY-----
-CUSTOM_AUTH_PUBLIC_JWK={"kty":"RSA","kid":"trade-xyz-dev","use":"sig","alg":"RS256","n":"REPLACE_ME","e":"AQAB"}
-# Optional: override the kid used in JWT headers
-# CUSTOM_AUTH_KEY_ID=trade-xyz-dev
+CUSTOM_AUTH_PRIVATE_KEY=...   # see Auth section below
+CUSTOM_AUTH_PUBLIC_JWK=...   # see Auth section below
 ```
 
-Start the dev servers (Convex + Vite):
+**One-time Convex setup (use an interactive terminal – e.g. Terminal.app):**
+
+1. Log in and create/link a project (Convex will prompt for device name and project):
+   ```sh
+   bun x convex dev --env-file .env.local --local
+   ```
+2. When prompted, choose to create a new project or use an existing one. Convex will write `CONVEX_DEPLOYMENT` to `.env.local` and start the local backend. Stop it with Ctrl+C when ready.
+
+**If you see WebSocket 101/1006 errors** when running Convex with Bun, the CLI’s sync has a known issue with Bun’s WebSocket. Workaround: install Node (e.g. `brew install node`) and run the Convex backend with Node only: `npx convex dev --env-file .env.local --local` in one terminal, then `bun run dev:ui` in another. The rest of the project stays on Bun.
+
+After that, start the dev servers (Convex + Vite):
 
 ```sh
-npm run dev
-```
-
-If you prefer Bun:
-
-```sh
-bun install
 bun run dev
 ```
+
+Or run Convex and Vite separately: `bun run dev:convex` in one terminal, `bun run dev:ui` in another.
 
 Build and preview:
 
 ```sh
-npm run build
-npm run preview
+bun run build
+bun run preview
 ```
 
 ## Auth (custom JWT)
@@ -128,19 +128,19 @@ CUSTOM_AUTH_PUBLIC_JWK={"kty":"RSA","kid":"trade-xyz-prod","use":"sig","alg":"RS
 Deploy the Convex functions:
 
 ```sh
-CONVEX_DEPLOYMENT=prod:earnest-ram-681 npx convex deploy --yes
+CONVEX_DEPLOYMENT=prod:earnest-ram-681 bun x convex deploy --yes
 ```
 
 If your project is already configured, this also works:
 
 ```sh
-npx convex deploy --prod
+bun x convex deploy --prod
 ```
 
 Redeploy after changing Convex environment variables or schema.
 
 ### Cloudflare Pages (frontend)
-Set build output to `dist`, build command to `npm run build`, and set:
+Set build output to `dist`, build command to `bun run build`, and set:
 
 ```
 VITE_CONVEX_URL=https://earnest-ram-681.convex.cloud
