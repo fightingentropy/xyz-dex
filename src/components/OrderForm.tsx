@@ -66,6 +66,7 @@ const OrderForm: Component = () => {
   const [marginModeOpen, setMarginModeOpen] = createSignal(false);
   const [marginModeLoading, setMarginModeLoading] = createSignal(false);
   const [adminDepositOpen, setAdminDepositOpen] = createSignal(false);
+  const [isSubmitting, setIsSubmitting] = createSignal(false);
   const operatorVault = createMemo(() =>
     vaultsList().find(
       (vault: VaultSummary) => vault.isOperator && vault.status === "active",
@@ -573,6 +574,31 @@ const OrderForm: Component = () => {
         : "Classic",
   );
 
+  // Sanitize a free-text numeric input: strip any non-numeric characters,
+  // collapse to a single decimal point, reject scientific notation (e/E),
+  // and clamp the fractional part to `precision` decimals. Returns a string
+  // safe to commit to state (never NaN / scientific / multi-dot).
+  const sanitizeNumericInput = (value: string, precision: number) => {
+    // Drop everything except digits and dots (this also removes e/E/+/-).
+    let cleaned = String(value ?? "").replace(/[^0-9.]/g, "");
+    // Collapse to a single decimal point (keep the first one).
+    const firstDot = cleaned.indexOf(".");
+    if (firstDot !== -1) {
+      cleaned =
+        cleaned.slice(0, firstDot + 1) +
+        cleaned.slice(firstDot + 1).replace(/\./g, "");
+    }
+    // Clamp the fractional part to the asset precision.
+    if (firstDot !== -1 && precision >= 0) {
+      const [intPart, fracPart = ""] = cleaned.split(".");
+      cleaned =
+        precision === 0
+          ? intPart
+          : `${intPart}.${fracPart.slice(0, precision)}`;
+    }
+    return cleaned;
+  };
+
   const parsePriceInput = (value: string) => {
     const trimmed = value.trim();
     if (!trimmed) return null;
@@ -667,7 +693,8 @@ const OrderForm: Component = () => {
   const clampPercent = (value: number) =>
     Math.min(100, Math.max(0, Math.round(value)));
 
-  const updateAmountInput = (value: string) => {
+  const updateAmountInput = (rawValue: string) => {
+    const value = sanitizeNumericInput(rawValue, sizePrecision());
     setAmount(value);
     const max = maxSize();
     const parsed = parseFloat(value);
@@ -755,6 +782,8 @@ const OrderForm: Component = () => {
 
   const submitOrder = async () => {
     if (!isOrderValid()) return;
+    // Guard against double-firing while a mutation is in flight.
+    if (isSubmitting()) return;
     if (!isAuthenticated()) {
       const message = "Sign in to trade.";
       if (isSpot()) {
@@ -768,73 +797,79 @@ const OrderForm: Component = () => {
       setSpotError("Vaults can only trade perps.");
       return;
     }
-    if (isSpot()) {
-      const asset = spotAsset();
-      if (!asset) {
-        setSpotError("Spot asset unavailable.");
+
+    setIsSubmitting(true);
+    try {
+      if (isSpot()) {
+        const asset = spotAsset();
+        if (!asset) {
+          setSpotError("Spot asset unavailable.");
+          return;
+        }
+        const result = await placeSpotOrder({
+          symbol: asset,
+          side: isLong() ? "buy" : "sell",
+          size: orderSize(),
+          price: orderPrice(),
+        });
+        if (!result.ok) {
+          setSpotError(result.error ?? "Spot order failed.");
+          return;
+        }
+        setSpotError("");
+        setOrderError("");
+        setAmount("");
+        setSliderValue(0);
         return;
       }
-      const result = await placeSpotOrder({
-        symbol: asset,
+
+      const tpValue = tpsl() ? parsePriceInput(takeProfit()) : null;
+      const slValue = tpsl() ? parsePriceInput(stopLoss()) : null;
+      if (tpValue !== null && Number.isNaN(tpValue)) {
+        setOrderError("Enter a valid take profit price.");
+        return;
+      }
+      if (slValue !== null && Number.isNaN(slValue)) {
+        setOrderError("Enter a valid stop loss price.");
+        return;
+      }
+
+      const result = await placeOrder({
+        symbol: currentSymbol(),
         side: isLong() ? "buy" : "sell",
+        type: orderType(),
         size: orderSize(),
-        price: orderPrice(),
+        price: orderType() === "limit" ? parsedLimitPrice() : undefined,
+        leverage: leverage(),
+        collateral: collateral(),
+        marginType: marginType(),
       });
       if (!result.ok) {
-        setSpotError(result.error ?? "Spot order failed.");
+        setOrderError(result.error ?? "Order failed.");
         return;
       }
-      setSpotError("");
-      setOrderError("");
+
+      let tpslError = false;
+      if (tpsl() && (tpValue !== null || slValue !== null)) {
+        const tpslResult = await updatePositionTpsl({
+          symbol: currentSymbol(),
+          takeProfit: tpValue,
+          stopLoss: slValue,
+        });
+        if (!tpslResult.ok) {
+          setOrderError(tpslResult.error ?? "Failed to update TP/SL.");
+          tpslError = true;
+        }
+      }
+
+      if (!tpslError) {
+        setOrderError("");
+      }
       setAmount("");
       setSliderValue(0);
-      return;
+    } finally {
+      setIsSubmitting(false);
     }
-
-    const tpValue = tpsl() ? parsePriceInput(takeProfit()) : null;
-    const slValue = tpsl() ? parsePriceInput(stopLoss()) : null;
-    if (tpValue !== null && Number.isNaN(tpValue)) {
-      setOrderError("Enter a valid take profit price.");
-      return;
-    }
-    if (slValue !== null && Number.isNaN(slValue)) {
-      setOrderError("Enter a valid stop loss price.");
-      return;
-    }
-
-    const result = await placeOrder({
-      symbol: currentSymbol(),
-      side: isLong() ? "buy" : "sell",
-      type: orderType(),
-      size: orderSize(),
-      price: orderType() === "limit" ? parsedLimitPrice() : undefined,
-      leverage: leverage(),
-      collateral: collateral(),
-      marginType: marginType(),
-    });
-    if (!result.ok) {
-      setOrderError(result.error ?? "Order failed.");
-      return;
-    }
-
-    let tpslError = false;
-    if (tpsl() && (tpValue !== null || slValue !== null)) {
-      const tpslResult = await updatePositionTpsl({
-        symbol: currentSymbol(),
-        takeProfit: tpValue,
-        stopLoss: slValue,
-      });
-      if (!tpslResult.ok) {
-        setOrderError(tpslResult.error ?? "Failed to update TP/SL.");
-        tpslError = true;
-      }
-    }
-
-    if (!tpslError) {
-      setOrderError("");
-    }
-    setAmount("");
-    setSliderValue(0);
   };
 
   const handleDepositClick = () => {
@@ -1175,7 +1210,9 @@ const OrderForm: Component = () => {
                 class="flex-1 bg-transparent px-3 text-sm text-slate-100 font-mono text-right"
                 placeholder={mark().toFixed(3)}
                 value={limitPrice()}
-                onInput={(e) => setLimitPrice(e.currentTarget.value)}
+                onInput={(e) =>
+                  setLimitPrice(sanitizeNumericInput(e.currentTarget.value, 3))
+                }
               />
               <span class="text-xs text-brand-slate-400">
                 {isSpot() ? "USDC" : collateral()}
@@ -1358,20 +1395,22 @@ const OrderForm: Component = () => {
 
         <button
           class={`w-full rounded-xl py-3 text-sm font-semibold transition-colors ${
-            canSubmitOrder()
+            canSubmitOrder() && !isSubmitting()
               ? "bg-brand-accent text-brand-screen hover:brightness-105"
               : "bg-brand-border text-brand-slate-500 cursor-not-allowed"
           }`}
           onClick={submitOrder}
-          disabled={!canSubmitOrder()}
+          disabled={!canSubmitOrder() || isSubmitting()}
         >
-          {isSpot() && insufficientSpotBalance()
-            ? isLong()
-              ? "Not enough USDC"
-              : "Not enough balance"
-            : insufficientMargin()
-              ? "Not enough margin"
-              : "Place Order"}
+          {isSubmitting()
+            ? "Placing..."
+            : isSpot() && insufficientSpotBalance()
+              ? isLong()
+                ? "Not enough USDC"
+                : "Not enough balance"
+              : insufficientMargin()
+                ? "Not enough margin"
+                : "Place Order"}
         </button>
       </div>
 

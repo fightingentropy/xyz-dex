@@ -432,28 +432,41 @@ const { trackedPerps, trackedSpots, trackedAssetsKey } = createRoot(() => {
 });
 
 // Reactive markets store
-const { markets, setMarkets, marketsLoading, setMarketsLoading } = createRoot(
-  () => {
-    const [markets, setMarkets] = createSignal<Market[]>([]);
-    const [marketsLoading, setMarketsLoading] = createSignal(true);
+const {
+  markets,
+  setMarkets,
+  marketsLoading,
+  setMarketsLoading,
+  marketsError,
+  setMarketsError,
+} = createRoot(() => {
+  const [markets, setMarkets] = createSignal<Market[]>([]);
+  const [marketsLoading, setMarketsLoading] = createSignal(true);
+  const [marketsError, setMarketsError] = createSignal<string | null>(null);
 
-    createEffect(() => {
-      watchlists();
-      setMarkets((prev) =>
-        prev.map((market) => ({
-          ...market,
-          watchlist: isWatchlisted(market.symbol),
-        })),
-      );
-    });
+  createEffect(() => {
+    watchlists();
+    setMarkets((prev) =>
+      prev.map((market) => ({
+        ...market,
+        watchlist: isWatchlisted(market.symbol),
+      })),
+    );
+  });
 
-    return { markets, setMarkets, marketsLoading, setMarketsLoading };
-  },
-);
+  return {
+    markets,
+    setMarkets,
+    marketsLoading,
+    setMarketsLoading,
+    marketsError,
+    setMarketsError,
+  };
+});
 
 // Export reactive accessor
 export const MARKETS = markets;
-export { marketsLoading };
+export { marketsLoading, marketsError };
 
 const updateActiveWatchlistSymbols = (symbols: string[]) => {
   const state = watchlists();
@@ -1371,6 +1384,7 @@ const fetchAndUpdateMarkets = async (
 
     setMarkets(newMarkets);
     setMarketsLoading(false);
+    setMarketsError(null);
 
     const selected = syncCurrentMarket(newMarkets);
 
@@ -1402,6 +1416,7 @@ const fetchAndUpdateMarkets = async (
     if (signal?.aborted) return;
     console.error("Failed to fetch markets:", e);
     setMarketsLoading(false);
+    setMarketsError("Live data unavailable. Retrying…");
   }
 };
 
@@ -1431,6 +1446,7 @@ const fetchAndUpdateLivePrices = async (
 
   if (signal?.aborted) return;
   applyLivePriceUpdates(updates);
+  if (updates.size > 0) setMarketsError(null);
 };
 
 const MARKETS_POLL_MS = 15000;
@@ -1478,6 +1494,7 @@ export const useLivePrices = (options?: { enabled?: () => boolean }) => {
     } catch (e) {
       if (nextController.signal.aborted) return;
       console.error("Error updating live prices:", e);
+      setMarketsError("Live data unavailable. Retrying…");
     } finally {
       livePollInFlight = false;
       if (livePollQueued && !nextController.signal.aborted) {

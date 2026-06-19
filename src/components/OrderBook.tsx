@@ -1,15 +1,21 @@
-import { Component, For, createMemo } from "solid-js";
+import { Component, For, Show, createMemo } from "solid-js";
 import { currentSymbol, markPrice } from "../stores/market";
 import { getOrderBook } from "../stores/clob";
 
+const MAX_DEPTH = 15;
+
 const OrderBook: Component = () => {
   const book = createMemo(() => getOrderBook(currentSymbol()));
-  const bids = createMemo(() => book().bids);
-  const asks = createMemo(() => book().asks);
+  // Cap rendered depth to the top levels nearest the spread.
+  const bids = createMemo(() => book().bids.slice(0, MAX_DEPTH));
+  const asks = createMemo(() => book().asks.slice(0, MAX_DEPTH));
+  const isEmpty = createMemo(() => bids().length === 0 && asks().length === 0);
+  // Render asks high-to-low so the best ask sits closest to the spread.
   const asksForDisplay = createMemo(() => [...asks()].reverse());
 
   const formatSize = (size: number) => size.toFixed(2);
 
+  // Compute maxTotal incrementally over the (already capped) rendered levels.
   const maxTotal = createMemo(() => {
     let max = 1;
     const askList = asks();
@@ -84,6 +90,14 @@ const OrderBook: Component = () => {
         <div class="text-right">Total</div>
       </div>
 
+      <Show
+        when={!isEmpty()}
+        fallback={
+          <div class="flex-1 flex items-center justify-center px-3 text-xs text-brand-slate-500">
+            Loading order book…
+          </div>
+        }
+      >
       {/* Asks */}
       <div class="flex-1 overflow-hidden flex flex-col justify-end">
         <For each={asksForDisplay()}>
@@ -149,6 +163,7 @@ const OrderBook: Component = () => {
           )}
         </For>
       </div>
+      </Show>
     </div>
   );
 };

@@ -258,7 +258,15 @@ const {
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    // Best-effort: revoke server-side sessions before clearing local state.
+    try {
+      if (getValidToken()) {
+        await convex.mutation(api.users.revokeSessions, {});
+      }
+    } catch (error) {
+      console.warn("Failed to revoke sessions on logout:", error);
+    }
     clearSession();
     attachConvexAuth();
   };

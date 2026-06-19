@@ -14,7 +14,7 @@ import { isAuthenticated } from "./auth";
 import { currentSymbol, markPrice, MARKETS } from "./market";
 import type { L2Book as OrderBook } from "../lib/format";
 import { isVaultTradingAccount, tradingVaultId } from "./tradingAccount";
-import { getSpotBalance, isSpotAsset } from "./wallet";
+import { normalizeSymbol } from "../lib/format";
 
 export type Collateral = "USDC" | "USDT";
 export type OrderSide = "buy" | "sell";
@@ -113,8 +113,11 @@ const { openOrders, positions, perpsBalances, portfolioMarginStatus } =
         portfolioMarginQuery() as PortfolioMarginStatus,
     };
   });
-const [orderBooks] = createStore<Record<string, OrderBook>>({});
+const [orderBooks, setOrderBooks] = createStore<Record<string, OrderBook>>({});
 const EMPTY_BOOK: OrderBook = { asks: [], bids: [] };
+
+// Maximum number of price levels to keep per side in the order book.
+const ORDER_BOOK_DEPTH = 15;
 
 const parseNumber = (value: string | number): number => {
   const cleaned = String(value ?? "")
@@ -131,11 +134,6 @@ const normalizeAssetSymbol = (symbol: string) => {
     return trimmed.slice(trimmed.indexOf(":") + 1).toUpperCase();
   }
   return trimmed.toUpperCase();
-};
-
-const getSpotBalanceForSymbol = (symbol: string) => {
-  const normalized = normalizeAssetSymbol(symbol);
-  return isSpotAsset(normalized) ? getSpotBalance(normalized) : 0;
 };
 
 const getSpotPriceForAsset = (asset: string, markets = MARKETS()) => {
@@ -158,22 +156,12 @@ const getSpotPriceForAsset = (asset: string, markets = MARKETS()) => {
   return perpPrice > 0 ? perpPrice : 0;
 };
 
-const isCrossMarginPosition = (position: Position) =>
-  (position.marginType ?? "cross") === "cross";
-
-const getHedgedSpotSize = (position: Position) => {
-  if (!isPortfolioMarginEnabled()) return 0;
-  if (!isCrossMarginPosition(position)) return 0;
-  if (position.size >= 0) return 0;
-  const spotBalance = getSpotBalanceForSymbol(position.symbol);
-  const absSize = Math.abs(position.size);
-  return Math.min(absSize, spotBalance);
-};
+// Per spec "No symbol-scoped hedging": spot does NOT reduce a perp position's
+// size for liquidation / ADL / margin denominators. Always return the raw size.
+export const getHedgedSpotSize = (_position: Position) => 0;
 
 export const getEffectivePositionSize = (position: Position) => {
-  const absSize = Math.abs(position.size);
-  const hedged = getHedgedSpotSize(position);
-  return Math.max(0, absSize - hedged);
+  return Math.abs(position.size);
 };
 
 const getErrorText = (error: unknown): string => {
@@ -626,6 +614,131 @@ createRoot(() => {
       if (fundingUpdateTimeout) {
         clearTimeout(fundingUpdateTimeout);
         fundingUpdateTimeout = undefined;
+      }
+    });
+  });
+});
+
+type HyperliquidL2Level = { px: string; sz: string; n?: number };
+
+// Build a side ({price,size,total} levels with running cumulative total) from
+// the raw Hyperliquid l2Book level array, capped to ORDER_BOOK_DEPTH.
+const buildBookSide = (
+  levels: HyperliquidL2Level[] | undefined,
+): OrderBook["bids"] => {
+  if (!Array.isArray(levels)) return [];
+  const out: OrderBook["bids"] = [];
+  let runningTotal = 0;
+  for (let i = 0; i < levels.length && out.length < ORDER_BOOK_DEPTH; i += 1) {
+    const level = levels[i];
+    const price = parseNumber(level?.px ?? 0);
+    const size = parseNumber(level?.sz ?? 0);
+    if (!Number.isFinite(price) || price <= 0) continue;
+    if (!Number.isFinite(size) || size <= 0) continue;
+    runningTotal += size;
+    out.push({ price, size, total: runningTotal });
+  }
+  return out;
+};
+
+// Subscribe to the live Hyperliquid L2 order book for the active symbol and
+// populate the orderBooks store. Nothing else writes this store, so without
+// this the OrderBook component renders empty.
+createRoot(() => {
+  const L2_STREAM_URL = "wss://api.hyperliquid.xyz/ws";
+
+  createEffect(() => {
+    const symbol = currentSymbol();
+    if (!symbol) return;
+    const coin = normalizeSymbol(symbol);
+    if (!coin) return;
+
+    let socket: WebSocket | null = null;
+    let closed = false;
+    let reconnectTimer: number | undefined;
+    let reconnectAttempts = 0;
+
+    const clearReconnect = () => {
+      if (reconnectTimer !== undefined) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
+      }
+    };
+
+    const connect = () => {
+      if (closed) return;
+      const ws = new WebSocket(L2_STREAM_URL);
+      socket = ws;
+
+      ws.onopen = () => {
+        if (closed) {
+          ws.close();
+          return;
+        }
+        reconnectAttempts = 0;
+        ws.send(
+          JSON.stringify({
+            method: "subscribe",
+            subscription: { type: "l2Book", coin },
+          }),
+        );
+      };
+
+      ws.onmessage = (event) => {
+        if (closed) return;
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload?.channel !== "l2Book") return;
+          const data = payload?.data;
+          if (!data || normalizeSymbol(String(data.coin ?? "")) !== coin) return;
+          const levels = data.levels;
+          if (!Array.isArray(levels)) return;
+          const bids = buildBookSide(levels[0]);
+          const asks = buildBookSide(levels[1]);
+          setOrderBooks(symbol, { bids, asks });
+        } catch {
+          // ignore malformed frames
+        }
+      };
+
+      ws.onclose = () => {
+        if (closed) return;
+        // Exponential backoff with cap + jitter; reset on successful open.
+        reconnectAttempts += 1;
+        const base = Math.min(1000 * 2 ** (reconnectAttempts - 1), 30000);
+        const jitter = Math.random() * 0.3 * base;
+        clearReconnect();
+        reconnectTimer = setTimeout(
+          connect,
+          base + jitter,
+        ) as unknown as number;
+      };
+
+      ws.onerror = () => {
+        try {
+          ws.close();
+        } catch {
+          // no-op
+        }
+      };
+    };
+
+    connect();
+
+    onCleanup(() => {
+      closed = true;
+      clearReconnect();
+      if (socket) {
+        try {
+          socket.onopen = null;
+          socket.onmessage = null;
+          socket.onclose = null;
+          socket.onerror = null;
+          socket.close();
+        } catch {
+          // no-op
+        }
+        socket = null;
       }
     });
   });

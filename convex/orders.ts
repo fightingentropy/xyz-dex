@@ -5,11 +5,15 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { getAuthUser, requireAuthUser } from "./lib/auth";
 import {
   calculateWeightedSpotEquity,
-  getDemoPrice,
   isPortfolioMarginEnabled,
   type PositionExposure,
   updatePortfolioMetrics,
 } from "./lib/portfolio";
+import {
+  getServerFundingRate,
+  getServerMarkPrice,
+} from "./lib/prices";
+import { bumpCounter } from "./lib/stats";
 
 const collateralValidator = v.union(v.literal("USDC"), v.literal("USDT"));
 const sideValidator = v.union(v.literal("buy"), v.literal("sell"));
@@ -121,61 +125,52 @@ const isValidPrice = (value: number) => Number.isFinite(value) && value > 0;
 
 const resolveMarkPrice = (
   symbol: string,
-  markOverrides: Record<string, number>,
+  markPrices: Record<string, number>,
 ) => {
-  const override = markOverrides[symbol];
-  if (isValidPrice(override)) return override;
-  const demo = getDemoPrice(symbol);
-  if (isValidPrice(demo)) return demo;
+  const mark = markPrices[symbol];
+  if (isValidPrice(mark)) return mark;
   return 0;
 };
 
-const normalizeAssetSymbol = (symbol: string) => {
-  const trimmed = String(symbol ?? "").trim();
-  if (!trimmed) return "";
-  if (trimmed.toLowerCase().startsWith("xyz:")) {
-    return trimmed.slice(trimmed.indexOf(":") + 1).toUpperCase();
-  }
-  return trimmed.toUpperCase();
-};
-
-const isCrossMargin = (marginType?: MarginType) =>
-  (marginType ?? "cross") === "cross";
-
-const applySpotNetting = (
-  size: number,
-  symbol: string,
-  marginType: MarginType | undefined,
-  spotRemaining: Record<string, number> | null,
+/**
+ * Build a server-derived mark price map keyed by the EXACT position symbol so
+ * downstream margin / PnL helpers can look prices up without ever touching a
+ * client-supplied value. Any extra symbols (e.g. the order being placed) are
+ * included via `extraSymbols`. Symbols with no fresh oracle price / demo
+ * fallback are simply omitted (helpers skip them via isValidPrice).
+ */
+const buildServerMarkPrices = async (
+  ctx: MutationCtx | QueryCtx,
+  symbols: string[],
 ) => {
-  const absSize = Math.abs(size);
-  if (!spotRemaining) return absSize;
-  if (size >= 0 || !isCrossMargin(marginType)) return absSize;
-  const asset = normalizeAssetSymbol(symbol);
-  const remaining = spotRemaining[asset] ?? 0;
-  if (remaining <= 0) return absSize;
-  const hedged = Math.min(remaining, absSize);
-  spotRemaining[asset] = remaining - hedged;
-  return absSize - hedged;
+  const map: Record<string, number> = {};
+  const seen = new Set<string>();
+  for (const symbol of symbols) {
+    if (!symbol || seen.has(symbol)) continue;
+    seen.add(symbol);
+    try {
+      map[symbol] = await getServerMarkPrice(ctx, symbol);
+    } catch {
+      // No fresh price and no demo fallback — omit; callers skip via isValidPrice.
+    }
+  }
+  return map;
 };
 
+// Margin is charged on FULL notional per spec ("No symbol-scoped hedging").
+// Margin used = Σ abs(size) * markPrice / leverage. Spot contributes to buying
+// power only through weightedSpotEquity in the collateral pool — never as a
+// same-asset offset against perps margin.
 const calculateMarginUsed = (
   positions: Doc<"positions">[],
-  markOverrides: Record<string, number>,
-  spotBalances?: Record<string, number>,
+  markPrices: Record<string, number>,
 ) => {
   let marginUsed = 0;
-  const spotRemaining = spotBalances ? { ...spotBalances } : null;
   for (const position of positions) {
     if (position.leverage <= 0) continue;
-    const mark = resolveMarkPrice(position.symbol, markOverrides);
+    const mark = resolveMarkPrice(position.symbol, markPrices);
     if (!isValidPrice(mark)) continue;
-    const size = applySpotNetting(
-      position.size,
-      position.symbol,
-      position.marginType ?? "cross",
-      spotRemaining,
-    );
+    const size = Math.abs(position.size);
     if (size <= 0) continue;
     marginUsed += (size * mark) / position.leverage;
   }
@@ -189,7 +184,6 @@ const calculateNextMarginUsed = (
     signedSize,
     leverage,
     markPrice,
-    marginType,
   }: {
     symbol: string;
     signedSize: number;
@@ -197,46 +191,32 @@ const calculateNextMarginUsed = (
     markPrice: number;
     marginType?: MarginType;
   },
-  markOverrides: Record<string, number>,
-  spotBalances?: Record<string, number>,
+  markPrices: Record<string, number>,
 ) => {
   let marginUsed = 0;
   let applied = false;
-  const spotRemaining = spotBalances ? { ...spotBalances } : null;
 
   for (const position of positions) {
     let nextSize = position.size;
     let nextLeverage = position.leverage;
-    let nextMarginType = position.marginType ?? "cross";
 
     if (position.symbol === symbol) {
       applied = true;
       nextSize = position.size + signedSize;
       nextLeverage = leverage;
-      nextMarginType = marginType ?? nextMarginType;
     }
 
     if (nextSize === 0 || nextLeverage <= 0) continue;
-    const mark = resolveMarkPrice(position.symbol, markOverrides);
+    const mark = resolveMarkPrice(position.symbol, markPrices);
     if (!isValidPrice(mark)) continue;
-    const size = applySpotNetting(
-      nextSize,
-      position.symbol,
-      nextMarginType,
-      spotRemaining,
-    );
+    const size = Math.abs(nextSize);
     if (size <= 0) continue;
     marginUsed += (size * mark) / nextLeverage;
   }
 
   if (!applied && signedSize !== 0) {
     if (leverage > 0 && isValidPrice(markPrice)) {
-      const size = applySpotNetting(
-        signedSize,
-        symbol,
-        marginType,
-        spotRemaining,
-      );
+      const size = Math.abs(signedSize);
       if (size > 0) {
         marginUsed += (size * markPrice) / leverage;
       }
@@ -248,11 +228,11 @@ const calculateNextMarginUsed = (
 
 const calculateTotalUnrealizedPnl = (
   positions: Doc<"positions">[],
-  markOverrides: Record<string, number>,
+  markPrices: Record<string, number>,
 ) => {
   let total = 0;
   for (const position of positions) {
-    const mark = resolveMarkPrice(position.symbol, markOverrides);
+    const mark = resolveMarkPrice(position.symbol, markPrices);
     if (!isValidPrice(mark)) continue;
     if (!isValidPrice(position.entryPrice)) continue;
     total += (mark - position.entryPrice) * position.size;
@@ -277,21 +257,27 @@ const adjustPerpsBalance = async (
     .unique();
   const now = Date.now();
   if (!existing) {
+    // Floor at 0: a debit can never mint a negative balance. The shortfall is
+    // treated as bankruptcy for this sim — the loss is capped at available
+    // collateral (here, zero).
     await ctx.db.insert("perpsBalances", {
       ...(userId ? { userId } : {}),
       ownerType,
       ownerId,
       asset,
-      balance: delta,
+      balance: Math.max(0, delta),
       updatedAt: now,
     });
     return;
   }
+  // Floor the resulting balance at 0 so a realized loss never drives the perps
+  // balance negative. Credits (positive delta) are unaffected.
+  const nextBalance = Math.max(0, existing.balance + delta);
   await ctx.db.patch(existing._id, {
     ...(userId ? { userId } : {}),
     ownerType,
     ownerId,
-    balance: existing.balance + delta,
+    balance: nextBalance,
     updatedAt: now,
   });
 };
@@ -438,6 +424,11 @@ const recordTrade = async (
     orderId,
     createdAt: Date.now(),
   });
+  // Display counters: count every trade; fee is currently 0 everywhere. Volume
+  // is counted via updatePortfolioMetrics below (per-user), matching the
+  // dashboard's historical semantics.
+  await bumpCounter(ctx, "total_trades", 1);
+  await bumpCounter(ctx, "total_fees", 0);
   if (ownerType === OWNER_TYPE_USER && userId) {
     await updatePortfolioMetrics(ctx, userId, {
       volumeDelta: notional,
@@ -614,19 +605,24 @@ export const updateFundingForPositions = mutation({
       .collect();
 
     const now = Date.now();
-    const fundingRates = args.fundingRates ?? {};
-    const markPrices = args.markPrices ?? {};
     let updatedCount = 0;
 
     for (const position of positions) {
-      const fundingRate = fundingRates[position.symbol];
-      const markPrice = markPrices[position.symbol];
+      // Funding rate and mark price are sourced from the server oracle ONLY.
+      // Client-supplied args.fundingRates / args.markPrices are ignored for money.
+      let fundingRate: number;
+      let markPrice: number;
+      try {
+        fundingRate = await getServerFundingRate(ctx, position.symbol);
+        markPrice = await getServerMarkPrice(ctx, position.symbol);
+      } catch {
+        // No fresh server price available for this symbol — skip funding.
+        continue;
+      }
 
-      // Skip if we don't have funding rate or mark price
+      // Skip if we don't have a usable funding rate or mark price
       if (
-        fundingRate === undefined ||
         !Number.isFinite(fundingRate) ||
-        markPrice === undefined ||
         !Number.isFinite(markPrice) ||
         markPrice <= 0
       ) {
@@ -712,7 +708,9 @@ export const placePerpsOrder = mutation({
     price: v.optional(v.number()),
     leverage: v.number(),
     collateral: collateralValidator,
-    markPrice: v.number(),
+    // markPrice / markPrices / spotPrices remain accepted for back-compat with
+    // the existing client but are IGNORED for all settlement / margin math.
+    markPrice: v.optional(v.number()),
     markPrices: v.optional(v.record(v.string(), v.number())),
     spotPrices: v.optional(v.record(v.string(), v.number())),
     marginType: v.optional(marginTypeValidator),
@@ -732,12 +730,13 @@ export const placePerpsOrder = mutation({
     if (!Number.isFinite(args.size) || args.size <= 0) {
       throw new ConvexError("Size must be positive.");
     }
-    if (!Number.isFinite(args.markPrice) || args.markPrice <= 0) {
-      throw new ConvexError("Invalid mark price.");
-    }
     if (!Number.isFinite(args.leverage) || args.leverage <= 0) {
       throw new ConvexError("Invalid leverage.");
     }
+
+    // Authoritative server mark for the symbol being traded. Throws if the
+    // oracle has no fresh price and no demo fallback.
+    const serverMark = await getServerMarkPrice(ctx, args.symbol);
 
     const marginType = args.marginType ?? "cross";
     const positions = await ctx.db
@@ -752,42 +751,26 @@ export const placePerpsOrder = mutation({
       owner.ownerType === OWNER_TYPE_USER
         ? await isPortfolioMarginEnabled(ctx, user._id)
         : false;
-    const markOverrides = {
-      ...(args.markPrices ?? {}),
-      [args.symbol]: args.markPrice,
-    };
+    // Build a price map purely from server marks (existing positions + the
+    // order symbol). Client price args never enter this map.
+    const markPrices = await buildServerMarkPrices(ctx, [
+      args.symbol,
+      ...positions.map((position) => position.symbol),
+    ]);
+    markPrices[args.symbol] = serverMark;
 
     if (portfolioMarginEnabled) {
-      const spotBalances = await ctx.db
-        .query("spotBalances")
-        .withIndex("by_owner", (q) =>
-          q.eq("ownerType", owner.ownerType).eq("ownerId", owner.ownerId),
-        )
-        .collect();
-      const spotBalanceMap = spotBalances.reduce<Record<string, number>>(
-        (acc, balance) => {
-          acc[normalizeAssetSymbol(balance.asset)] = balance.balance;
-          return acc;
-        },
-        {},
-      );
-
-      const currentMarginUsed = calculateMarginUsed(
-        positions,
-        markOverrides,
-        spotBalanceMap,
-      );
+      const currentMarginUsed = calculateMarginUsed(positions, markPrices);
       const nextMarginUsed = calculateNextMarginUsed(
         positions,
         {
           symbol: args.symbol,
           signedSize,
           leverage: args.leverage,
-          markPrice: args.markPrice,
+          markPrice: serverMark,
           marginType,
         },
-        markOverrides,
-        spotBalanceMap,
+        markPrices,
       );
       const perpsBalances = await ctx.db
         .query("perpsBalances")
@@ -823,15 +806,17 @@ export const placePerpsOrder = mutation({
           marginType,
         });
       }
+      // Pass undefined for spotPrices so spot equity is valued from server-side
+      // prices only (the portfolio lib falls back to its own oracle/demo prices).
       const weightedSpotEquity = await calculateWeightedSpotEquity(
         ctx,
         user._id,
         exposurePositions,
-        args.spotPrices,
+        undefined,
       );
       const totalUnrealized = calculateTotalUnrealizedPnl(
         positions,
-        markOverrides,
+        markPrices,
       );
       const collateralPool =
         totalPerpsBalance + weightedSpotEquity + totalUnrealized;
@@ -848,7 +833,7 @@ export const placePerpsOrder = mutation({
       );
       const currentMarginUsed = calculateMarginUsed(
         collateralPositions,
-        markOverrides,
+        markPrices,
       );
       const nextMarginUsed = calculateNextMarginUsed(
         collateralPositions,
@@ -856,10 +841,10 @@ export const placePerpsOrder = mutation({
           symbol: args.symbol,
           signedSize,
           leverage: args.leverage,
-          markPrice: args.markPrice,
+          markPrice: serverMark,
           marginType,
         },
-        markOverrides,
+        markPrices,
       );
       const availableBalance = await getPerpsBalance(
         ctx,
@@ -880,14 +865,16 @@ export const placePerpsOrder = mutation({
       args.type === "limit" && Number.isFinite(args.price ?? NaN)
         ? args.price
         : undefined;
+    // The limit `price` is the client's crossing INTENT only. The crossing test
+    // compares it to the server mark; the actual fill ALWAYS settles at the
+    // server mark, never at the client value.
     const aggressive =
       args.type === "market" ||
       (limitPrice != null &&
         (args.side === "buy"
-          ? limitPrice >= args.markPrice
-          : limitPrice <= args.markPrice));
-    const fillPrice =
-      args.type === "market" ? args.markPrice : (limitPrice ?? args.markPrice);
+          ? limitPrice >= serverMark
+          : limitPrice <= serverMark));
+    const fillPrice = serverMark;
 
     if (aggressive) {
       const orderId = await ctx.db.insert("orders", {
@@ -967,7 +954,8 @@ export const cancelOrder = mutation({
 export const fillOpenOrder = mutation({
   args: {
     orderId: v.id("orders"),
-    markPrice: v.number(),
+    // markPrice accepted for back-compat but IGNORED — fill settles at server mark.
+    markPrice: v.optional(v.number()),
     vaultId: v.optional(v.id("vaults")),
   },
   handler: async (ctx, args) => {
@@ -983,8 +971,9 @@ export const fillOpenOrder = mutation({
     }
     if (order.status !== "open") return;
 
-    const fillPrice =
-      order.price ?? (Number.isFinite(args.markPrice) ? args.markPrice : 0);
+    // The resting order's limit price is only the crossing intent. The actual
+    // fill settles at the authoritative server mark price.
+    const fillPrice = await getServerMarkPrice(ctx, order.symbol);
     if (!Number.isFinite(fillPrice) || fillPrice <= 0) {
       throw new ConvexError("Invalid fill price.");
     }
@@ -1007,7 +996,7 @@ export const fillOpenOrder = mutation({
       price: fillPrice,
       leverage: order.leverage,
       collateral: order.collateral,
-      marginType: order.marginType ?? "isolated",
+      marginType: order.marginType ?? "cross",
     });
   },
 });
@@ -1015,7 +1004,8 @@ export const fillOpenOrder = mutation({
 export const closePosition = mutation({
   args: {
     symbol: v.string(),
-    markPrice: v.number(),
+    // markPrice accepted for back-compat but IGNORED — close settles at server mark.
+    markPrice: v.optional(v.number()),
     vaultId: v.optional(v.id("vaults")),
   },
   handler: async (ctx, args) => {
@@ -1028,10 +1018,14 @@ export const closePosition = mutation({
       args.symbol,
     );
     if (!position) return;
-    if (!Number.isFinite(args.markPrice) || args.markPrice <= 0) {
+
+    // Settlement price is the authoritative server mark, never the client value.
+    const markPrice = await getServerMarkPrice(ctx, position.symbol);
+    if (!Number.isFinite(markPrice) || markPrice <= 0) {
       throw new ConvexError("Invalid mark price.");
     }
 
+    const marginType = position.marginType ?? "cross";
     const side = position.size > 0 ? "sell" : "buy";
     const size = Math.abs(position.size);
     const now = Date.now();
@@ -1044,10 +1038,10 @@ export const closePosition = mutation({
       type: "market",
       size,
       filledSize: size,
-      avgFillPrice: args.markPrice,
+      avgFillPrice: markPrice,
       leverage: position.leverage,
       collateral: position.collateral,
-      marginType: position.marginType ?? "isolated",
+      marginType,
       status: "filled",
       createdAt: now,
       updatedAt: now,
@@ -1061,10 +1055,10 @@ export const closePosition = mutation({
       symbol: position.symbol,
       side,
       size,
-      price: args.markPrice,
+      price: markPrice,
       leverage: position.leverage,
       collateral: position.collateral,
-      marginType: position.marginType ?? "isolated",
+      marginType,
     });
   },
 });
@@ -1072,7 +1066,8 @@ export const closePosition = mutation({
 export const autoDeleveragePosition = mutation({
   args: {
     symbol: v.string(),
-    markPrice: v.number(),
+    // markPrice accepted for back-compat but IGNORED — ADL settles at server mark.
+    markPrice: v.optional(v.number()),
     reduceSize: v.number(),
     vaultId: v.optional(v.id("vaults")),
   },
@@ -1086,11 +1081,14 @@ export const autoDeleveragePosition = mutation({
       args.symbol,
     );
     if (!position) return;
-    if (!Number.isFinite(args.markPrice) || args.markPrice <= 0) {
-      throw new ConvexError("Invalid mark price.");
-    }
     if (!Number.isFinite(args.reduceSize) || args.reduceSize <= 0) {
       throw new ConvexError("Invalid reduce size.");
+    }
+
+    // Settlement price is the authoritative server mark, never the client value.
+    const markPrice = await getServerMarkPrice(ctx, position.symbol);
+    if (!Number.isFinite(markPrice) || markPrice <= 0) {
+      throw new ConvexError("Invalid mark price.");
     }
 
     const absSize = Math.abs(position.size);
@@ -1098,6 +1096,7 @@ export const autoDeleveragePosition = mutation({
     const size = Math.min(absSize, args.reduceSize);
     if (size <= 0) return;
 
+    const marginType = position.marginType ?? "cross";
     const side = position.size > 0 ? "sell" : "buy";
     const now = Date.now();
     const orderId = await ctx.db.insert("orders", {
@@ -1109,10 +1108,10 @@ export const autoDeleveragePosition = mutation({
       type: "market",
       size,
       filledSize: size,
-      avgFillPrice: args.markPrice,
+      avgFillPrice: markPrice,
       leverage: position.leverage,
       collateral: position.collateral,
-      marginType: position.marginType ?? "isolated",
+      marginType,
       status: "filled",
       createdAt: now,
       updatedAt: now,
@@ -1126,10 +1125,10 @@ export const autoDeleveragePosition = mutation({
       symbol: position.symbol,
       side,
       size,
-      price: args.markPrice,
+      price: markPrice,
       leverage: position.leverage,
       collateral: position.collateral,
-      marginType: position.marginType ?? "isolated",
+      marginType,
     });
   },
 });

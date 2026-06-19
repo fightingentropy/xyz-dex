@@ -1,5 +1,6 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { bumpCounter } from "./stats";
 
 // ============================================================================
 // Portfolio Margin Collateral Helpers
@@ -65,19 +66,6 @@ const normalizeAssetSymbol = (symbol: string) => {
   return trimmed.toUpperCase();
 };
 
-const buildShortExposureByAsset = (positions: PositionExposure[]) => {
-  const shorts: Record<string, number> = {};
-  for (const position of positions) {
-    if (!position || position.size >= 0) continue;
-    const marginType = position.marginType ?? "cross";
-    if (marginType === "isolated") continue;
-    const asset = normalizeAssetSymbol(position.symbol);
-    if (!asset) continue;
-    shorts[asset] = (shorts[asset] ?? 0) + Math.abs(position.size);
-  }
-  return shorts;
-};
-
 const resolveSpotPrice = (
   asset: string,
   spotPrices?: Record<string, number>,
@@ -102,40 +90,18 @@ export const getWeightedSpotEquityBreakdown = async (
     .query("spotBalances")
     .withIndex("by_user", (q) => q.eq("userId", userId))
     .collect();
-  const positions =
-    options.positions ??
-    (
-      await ctx.db
-        .query("positions")
-        .withIndex("by_user", (q) => q.eq("userId", userId))
-        .collect()
-    ).map((position) => ({
-      symbol: position.symbol,
-      size: position.size,
-      marginType: position.marginType ?? "cross",
-    }));
-  const shortByAsset = buildShortExposureByAsset(positions);
   const spotPrices = options.spotPrices;
 
+  // Per-asset COLLATERAL_WEIGHTS haircuts are applied UNIFORMLY to every spot
+  // asset. There is no symbol-scoped spot/short hedging (per specs.md "No
+  // symbol-scoped hedging"): spot contributes to buying power solely through
+  // its weighted equity here, while margin is charged on full notional in
+  // orders.ts. This keeps the equity side and the margin side consistent.
   return balances.map((balance) => {
     const normalized = normalizeAssetSymbol(balance.asset);
     const price = resolveSpotPrice(normalized, spotPrices);
-    const baseWeight = getCollateralWeight(normalized);
-    let weightedValue = balance.balance * price * baseWeight;
-    let weight = baseWeight;
-
-    if (normalized === "HYPE") {
-      const hedgedSize = Math.min(
-        balance.balance,
-        shortByAsset[normalized] ?? 0,
-      );
-      if (hedgedSize > 0 && price > 0) {
-        const unhedgedSize = Math.max(0, balance.balance - hedgedSize);
-        weightedValue = hedgedSize * price + unhedgedSize * price * baseWeight;
-        const denom = balance.balance * price;
-        weight = denom > 0 ? weightedValue / denom : baseWeight;
-      }
-    }
+    const weight = getCollateralWeight(normalized);
+    const weightedValue = balance.balance * price * weight;
 
     return {
       asset: balance.asset,
@@ -215,6 +181,7 @@ export const updatePortfolioMetrics = async (
   const volume = (existing?.volume ?? 0) + volumeDelta;
   const pnl = (existing?.pnl ?? 0) + pnlDelta;
   const totalEquity = perpsEquity + spotEquity;
+  const previousEquity = existing?.totalEquity ?? 0;
   const updatedAt = Date.now();
 
   if (existing) {
@@ -226,18 +193,21 @@ export const updatePortfolioMetrics = async (
       totalEquity,
       updatedAt,
     });
-    return;
+  } else {
+    await ctx.db.insert("portfolioMetrics", {
+      userId,
+      volume,
+      pnl,
+      perpsEquity,
+      spotEquity,
+      totalEquity,
+      updatedAt,
+    });
   }
 
-  await ctx.db.insert("portfolioMetrics", {
-    userId,
-    volume,
-    pnl,
-    perpsEquity,
-    spotEquity,
-    totalEquity,
-    updatedAt,
-  });
-
-  return;
+  // Maintain the global admin display counters from this single choke point.
+  // Equity is a running sum of per-user deltas (point-in-time aggregate).
+  await bumpCounter(ctx, "total_volume", volumeDelta);
+  await bumpCounter(ctx, "total_realized_pnl", pnlDelta);
+  await bumpCounter(ctx, "total_equity", totalEquity - previousEquity);
 };

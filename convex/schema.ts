@@ -10,18 +10,36 @@ export default defineSchema({
     deviceId: v.optional(v.string()), // Legacy field for old documents
     portfolioMarginEnabled: v.optional(v.boolean()), // Enable cross-asset portfolio margin
     demoSeedVersion: v.optional(v.number()), // Legacy field for seeded demo users
+    tokenValidAfter: v.optional(v.number()), // ms; tokens with iat older than this are revoked
     createdAt: v.number(),
     lastSeenAt: v.number(),
-  }).index("by_token", ["tokenIdentifier"]),
+  })
+    .index("by_token", ["tokenIdentifier"])
+    .index("by_lastSeen", ["lastSeenAt"]),
   authAccounts: defineTable({
     email: v.string(),
     emailLower: v.string(),
     passwordHash: v.string(),
     passwordSalt: v.string(),
+    passwordN: v.optional(v.number()), // scrypt cost parameter N used for this hash
     name: v.optional(v.string()),
     createdAt: v.number(),
     lastLoginAt: v.optional(v.number()),
   }).index("by_email", ["emailLower"]),
+  authRateLimits: defineTable({
+    key: v.string(), // emailLower the limit applies to
+    windowStart: v.number(),
+    attempts: v.number(),
+    lockedUntil: v.optional(v.number()),
+  }).index("by_key", ["key"]),
+  marketPrices: defineTable({
+    symbol: v.string(),
+    markPx: v.number(),
+    midPx: v.optional(v.number()),
+    funding: v.optional(v.number()),
+    source: v.optional(v.string()),
+    updatedAt: v.number(),
+  }).index("by_symbol", ["symbol"]),
   perpsBalances: defineTable({
     userId: v.optional(v.id("users")),
     ownerType: v.optional(v.union(v.literal("user"), v.literal("vault"))),
@@ -79,7 +97,8 @@ export default defineSchema({
       "ownerId",
       "status",
       "createdAt",
-    ]),
+    ])
+    .index("by_status", ["status"]),
   positions: defineTable({
     userId: v.optional(v.id("users")),
     ownerType: v.optional(v.union(v.literal("user"), v.literal("vault"))),
@@ -168,4 +187,17 @@ export default defineSchema({
   })
     .index("by_vault", ["vaultId"])
     .index("by_operator", ["operatorUserId"]),
+  // Sharded display counters for the admin dashboard. Maintained incrementally
+  // (see convex/lib/stats.ts) so the dashboard never full-table-scans the
+  // unbounded trades/orders history, and sharded so the per-trade counter
+  // writes don't create a single-hot-document contention point on the money
+  // path. Values are best-effort display metrics, not money — see recomputeStats.
+  statsCounters: defineTable({
+    name: v.string(),
+    shard: v.number(),
+    value: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_name", ["name"])
+    .index("by_name_shard", ["name", "shard"]),
 });

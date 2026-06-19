@@ -279,11 +279,19 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
 
     if (!chartReady() || !candleSeries) return;
 
-    const marketType = currentMarketType();
     const generation = streamGeneration;
     const interval = toHyperliquidInterval(resolution);
     const streamSymbol = normalizeSymbol(symbol);
     const streamUrl = "wss://api.hyperliquid.xyz/ws";
+    let reconnectAttempt = 0;
+
+    const scheduleReconnect = () => {
+      if (generation !== streamGeneration) return;
+      const base = Math.min(30000, 1500 * 2 ** reconnectAttempt);
+      const delay = base / 2 + Math.random() * (base / 2);
+      reconnectAttempt += 1;
+      reconnectTimer = setTimeout(connect, delay) as unknown as number;
+    };
 
     const connect = () => {
       if (generation !== streamGeneration) return;
@@ -296,6 +304,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
           socket.close();
           return;
         }
+        reconnectAttempt = 0;
         if (provider === "hyperliquid") {
           socket.send(
             JSON.stringify({
@@ -333,6 +342,9 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
           };
           if (!candle || !Number.isFinite(candle.time)) return;
 
+          // Read marketType fresh so streamed candles are cached under the
+          // CURRENT market type key (avoids stale-closure on perp/spot switch).
+          const marketType = currentMarketType();
           updateLastCandle(
             provider,
             `${symbol}-${marketType}`,
@@ -370,7 +382,7 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
 
       socket.onclose = () => {
         if (generation !== streamGeneration) return;
-        reconnectTimer = setTimeout(connect, 1500) as unknown as number;
+        scheduleReconnect();
       };
     };
 
@@ -499,6 +511,9 @@ const SymbolChart: Component<SymbolChartProps> = (props) => {
     const ready = chartReady();
     const visible = isTabVisible();
     const provider = dataProvider();
+    // Track marketType so the stream restarts on perp/spot switch and candles
+    // are not cached under the wrong key.
+    currentMarketType();
 
     if (loadTimer) {
       clearTimeout(loadTimer);

@@ -3,7 +3,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { getAuthUser, requireAuthUser } from "./lib/auth";
-import { getDemoPrice } from "./lib/portfolio";
+import { getServerMarkPrice, normalizeAssetSymbol } from "./lib/prices";
 
 const OWNER_TYPE_VAULT = "vault" as const;
 const OWNER_TYPE_USER = "user" as const;
@@ -69,10 +69,15 @@ const calculateVaultEquity = async (
     (sum, balance) => sum + balance.balance,
     0,
   );
-  const spotEquity = spotBalances.reduce((sum, balance) => {
-    const price = getDemoPrice(balance.asset);
-    return sum + balance.balance * price;
-  }, 0);
+
+  let spotEquity = 0;
+  for (const balance of spotBalances) {
+    if (balance.balance === 0) continue;
+    // Value spot at the authoritative server mark price (never a stale
+    // client/demo-only path). Stablecoins resolve to 1 via the oracle.
+    const price = await getServerMarkPrice(ctx, balance.asset);
+    spotEquity += balance.balance * price;
+  }
 
   return perpsEquity + spotEquity;
 };
@@ -361,7 +366,7 @@ export const withdrawUSDC = mutation({
 
     const equityUSDC = await calculateVaultEquity(ctx, vault._id);
     const sharePrice = resolveSharePrice(equityUSDC, vault.totalShares);
-    if (!Number.isFinite(sharePrice) || sharePrice < 0) {
+    if (!Number.isFinite(sharePrice) || sharePrice <= 0) {
       throw new ConvexError("Vault share price is unavailable.");
     }
 
@@ -372,13 +377,68 @@ export const withdrawUSDC = mutation({
     const fee = profit * PERFORMANCE_FEE_RATE;
     const payout = value - fee;
 
+    const now = Date.now();
+
+    // Share price reflects BLENDED equity (perps USDC + spot valued at the
+    // server mark price), but payout is USDC-only. If the vault holds non-USDC
+    // spot, liquidate the withdrawing member's PRO-RATA fraction of each spot
+    // asset to USDC at the server mark price BEFORE paying out, so the USDC
+    // payout matches the member's fair blended share value and later members
+    // are not drained. The fraction is the member's share of the whole vault.
+    const liquidationFraction =
+      vault.totalShares > 0 ? args.shares / vault.totalShares : 0;
+    if (liquidationFraction > 0) {
+      const vaultSpotBalances = await ctx.db
+        .query("spotBalances")
+        .withIndex("by_owner", (q) =>
+          q.eq("ownerType", OWNER_TYPE_VAULT).eq("ownerId", vault._id),
+        )
+        .collect();
+
+      let usdcFromSpot = 0;
+      for (const spot of vaultSpotBalances) {
+        if (spot.balance <= 0) continue;
+        if (normalizeAssetSymbol(spot.asset) === "USDC") continue;
+        const sellSize = spot.balance * liquidationFraction;
+        if (sellSize <= 0) continue;
+        const price = await getServerMarkPrice(ctx, spot.asset);
+        usdcFromSpot += sellSize * price;
+        await ctx.db.patch(spot._id, {
+          balance: spot.balance - sellSize,
+          updatedAt: now,
+        });
+      }
+
+      if (usdcFromSpot > 0) {
+        const vaultUsdcBalance = await getVaultPerpsBalance(
+          ctx,
+          vault._id,
+          "USDC",
+        );
+        if (vaultUsdcBalance) {
+          await ctx.db.patch(vaultUsdcBalance._id, {
+            ownerType: OWNER_TYPE_VAULT,
+            ownerId: vault._id,
+            balance: vaultUsdcBalance.balance + usdcFromSpot,
+            updatedAt: now,
+          });
+        } else {
+          await ctx.db.insert("perpsBalances", {
+            ownerType: OWNER_TYPE_VAULT,
+            ownerId: vault._id,
+            asset: "USDC",
+            balance: usdcFromSpot,
+            updatedAt: now,
+          });
+        }
+      }
+    }
+
     const vaultBalance = await getVaultPerpsBalance(ctx, vault._id, "USDC");
     const vaultUsdc = vaultBalance?.balance ?? 0;
     if (value > vaultUsdc) {
       throw new ConvexError("Vault has insufficient USDC liquidity.");
     }
-
-    const now = Date.now();
 
     if (vaultBalance) {
       await ctx.db.patch(vaultBalance._id, {

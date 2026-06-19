@@ -1,6 +1,7 @@
 import { ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAuthUser } from "./lib/auth";
+import { bumpCounter } from "./lib/stats";
 
 export const ensureUser = mutation({
   args: {},
@@ -10,12 +11,13 @@ export const ensureUser = mutation({
       throw new ConvexError("Not authenticated.");
     }
     const now = Date.now();
+    // Use .first() defensively so accidental duplicate rows don't throw.
     const existing = await ctx.db
       .query("users")
       .withIndex("by_token", (q) =>
         q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
-      .unique();
+      .first();
 
     if (existing) {
       const updates: {
@@ -39,7 +41,36 @@ export const ensureUser = mutation({
       createdAt: now,
       lastSeenAt: now,
     });
+
+    // Tolerate a concurrent insert under races: if another call inserted a row
+    // for the same tokenIdentifier, keep the earliest and patch lastSeenAt onto it.
+    const all = await ctx.db
+      .query("users")
+      .withIndex("by_token", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .collect();
+    if (all.length > 1) {
+      const winner = all.reduce((a, b) => (a.createdAt <= b.createdAt ? a : b));
+      await ctx.db.patch(winner._id, { lastSeenAt: now });
+      return winner._id;
+    }
+    // Count a genuinely-new user (skip the racy duplicate path above to avoid
+    // double counting; admin.recomputeStats can reconcile any drift).
+    await bumpCounter(ctx, "total_users", 1);
     return userId;
+  },
+});
+
+export const revokeSessions = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getAuthUser(ctx);
+    if (!user) {
+      throw new ConvexError("Not authenticated.");
+    }
+    await ctx.db.patch(user._id, { tokenValidAfter: Date.now() });
+    return null;
   },
 });
 
