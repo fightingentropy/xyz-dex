@@ -129,6 +129,14 @@ export const placeSpotOrder = async ({
   if (!Number.isFinite(price) || price <= 0) {
     return { ok: false, error: "Enter a valid price." };
   }
+  // Warm up the server oracle for this symbol so the fill settles on a fresh
+  // server price (the cron only polls already-held symbols). Best-effort and
+  // cheap (no-op when already fresh).
+  try {
+    await convex.action(api.prices.ensureSymbolFresh, { symbol });
+  } catch {
+    // ignore; placeSpotOrder derives the fill price server-side regardless
+  }
   try {
     await convex.mutation(api.spot.placeSpotOrder, {
       symbol,

@@ -9,7 +9,10 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 // ============================================================================
 
 // A marketPrices row is considered usable if it was updated within this window.
-export const FRESHNESS_MS = 30000;
+// Kept comfortably larger than the poll interval (convex/crons.ts) so a single
+// missed poll doesn't push a held symbol past freshness and fall back to demo
+// prices for settlement.
+export const FRESHNESS_MS = 45000;
 
 type AnyCtx = QueryCtx | MutationCtx;
 

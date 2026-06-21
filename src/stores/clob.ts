@@ -878,6 +878,17 @@ export const placeOrder = async ({
     return { ok: false, error: "Mark price unavailable." };
   }
 
+  // Make sure the server oracle has a fresh price for this symbol before it
+  // settles the order. The price cron only polls symbols that are already
+  // held/open, so a brand-new symbol may have no fresh row yet. Best-effort and
+  // cheap (no-op when already fresh); settlement derives the price server-side
+  // regardless of this call.
+  try {
+    await convex.action(api.prices.ensureSymbolFresh, { symbol });
+  } catch {
+    // ignore; placePerpsOrder falls back to the server oracle/demo price
+  }
+
   const markPrices: Record<string, number> = {};
   for (const position of positions()) {
     const positionMark = getMarkPriceForSymbol(position.symbol);
